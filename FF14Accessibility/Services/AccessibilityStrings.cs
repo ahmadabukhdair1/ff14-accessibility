@@ -1708,6 +1708,29 @@ public static partial class AccessibilityStrings
 
     public static string TargetFallbackName => IsGerman ? "Ziel" : "Target";
 
+    /// <summary>
+    /// Was ein anvisierter SPIELER sonst noch ist: Klasse, Stufe, Gruppenzugehoerigkeit.
+    /// Fuer die Zeile hinter dem Namen gebaut (der Aufrufer setzt das Komma davor).
+    ///
+    /// <para>
+    /// Klasse und Stufe kommen aus dem Charakter-Objekt des Spiels (PlayerInfo) und
+    /// fallen WEG, wenn das Spiel sie nicht meldet - nicht durch ein Ersatzwort und
+    /// nicht durch eine 0 als "Stufe 0". Die Gruppenzugehoerigkeit ist dagegen immer
+    /// eine Aussage des Spiels: es fuehrt den Charakter in Gruppe/Allianz oder nicht.
+    /// </para>
+    /// </summary>
+    public static string PlayerDetail(string job, int level, bool inGroup)
+    {
+        var parts = new List<string>();
+        if (job.Length > 0) parts.Add(job);
+        if (level > 0) parts.Add(IsGerman ? $"Stufe {level}" : $"Level {level}");
+        parts.Add(inGroup
+            ? (IsGerman ? "in deiner Gruppe" : "in your group")
+            : (IsGerman ? "nicht in deiner Gruppe" : "not in your group"));
+
+        return string.Join(", ", parts);
+    }
+
     // GP (Sammelpunkte) - the DE client says "SP", the EN client "GP".
     public static string NoGatheringPoints => IsGerman ? "Keine Sammelpunkte. SP gibt es nur als Sammler." : "No gathering points. GP only exists for gatherers.";
     public static string GpValue(uint cur, uint max) =>

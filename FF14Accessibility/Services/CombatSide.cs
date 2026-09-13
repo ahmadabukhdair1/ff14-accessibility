@@ -67,14 +67,25 @@ internal static class CombatSide
         if (obj is IBattleNpc npc && CompanionSubKinds.Contains(npc.BattleNpcKind))
             return true;
 
-        if (obj is ICharacter character)
-        {
-            var flags = character.StatusFlags;
-            if (flags.HasFlag(StatusFlags.PartyMember) || flags.HasFlag(StatusFlags.AllianceMember))
-                return true;
-        }
+        return IsGroupMember(obj);
+    }
 
-        return false;
+    /// <summary>
+    /// True, wenn das Spiel diesen Charakter als Mitglied der EIGENEN Gruppe
+    /// oder Allianz fuehrt - <see cref="StatusFlags.PartyMember"/> /
+    /// <see cref="StatusFlags.AllianceMember"/>, aus Dalamud
+    /// <c>ICharacter.StatusFlags</c>. Dieselbe Quelle, die
+    /// <see cref="IsAlly"/> schon benutzt; als eigene Frage, weil der
+    /// Objekt-Browser sie stellt ("wer hier ist mit mir unterwegs"). Kein
+    /// Rueckschluss aus der Kategorie: die Kategorie Verbuendete enthaelt auch
+    /// Begleiter und Trust-NPCs, die in keiner Gruppe stehen.
+    /// </summary>
+    internal static bool IsGroupMember(IGameObject obj)
+    {
+        if (obj is not ICharacter character) return false;
+
+        var flags = character.StatusFlags;
+        return flags.HasFlag(StatusFlags.PartyMember) || flags.HasFlag(StatusFlags.AllianceMember);
     }
 
     /// <summary>

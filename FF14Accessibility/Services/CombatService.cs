@@ -917,9 +917,8 @@ public sealed class CombatService
 
         if (_targetManager.Target is IBattleChara target && target.MaxHp > 0)
         {
-            var name = target.Name.TextValue;
-            if (string.IsNullOrWhiteSpace(name)) name = AccessibilityStrings.TargetFallbackName;
-            text += AccessibilityStrings.TargetStatusClause(name, target.CurrentHp, target.MaxHp);
+            text += AccessibilityStrings.TargetStatusClause(
+                TargetNameWithPlayerInfo(target), target.CurrentHp, target.MaxHp);
         }
 
         _tolk.SpeakInterrupt(text);
@@ -961,8 +960,7 @@ public sealed class CombatService
             return;
         }
 
-        var name = target.Name.TextValue;
-        if (string.IsNullOrWhiteSpace(name)) name = AccessibilityStrings.TargetFallbackName;
+        var name = TargetNameWithPlayerInfo(target);
 
         _log.Info($"[Ziel-HP] {name}: {target.CurrentHp}/{target.MaxHp}");
         // Dieselbe Formulierung wie im Anhang der Sammel-Ansage, damit dieselbe
@@ -970,6 +968,44 @@ public sealed class CombatService
         // der Anhang-Fassung faellt weg, hier ist es der ganze Satz.
         _tolk.SpeakInterrupt(
             AccessibilityStrings.TargetStatusClause(name, target.CurrentHp, target.MaxHp).TrimStart());
+    }
+
+    /// <summary>
+    /// Der Name des Ziels - bei einem SPIELER mit Klasse, Stufe und
+    /// Gruppenzugehoerigkeit. Beide Ziel-Ansagen (eigener Status und die reine
+    /// Ziel-HP) bauen ihre Zeile hier, damit dieselbe Auskunft nicht je nach
+    /// Taste anders klingt.
+    ///
+    /// <para>
+    /// Die Klasse ist die Auskunft, die man ueber einen Menschen sucht, und sie
+    /// steht im Spiel nirgends im Bild - der sehende Spieler holt sie sich ueber
+    /// "Betrachten" auf demselben Ziel. Stufe und "in deiner Gruppe" nennt das
+    /// Spiel ebenfalls, beides wird nur WIEDERGEGEBEN: meldet das Objekt keine
+    /// Klasse oder keine Stufe, faellt der jeweilige Teil weg, statt eine 0 oder
+    /// ein Ersatzwort zu behaupten (Spielerwunsch 2026-09-13, siehe PlayerInfo).
+    /// </para>
+    ///
+    /// <para>
+    /// Der Rohwert der Klasse steht im Log: sollte das Spiel bei fremden Spielern
+    /// keine Klasse nachliefern, ist das am naechsten Bericht nachpruefbar statt
+    /// beredet.
+    /// </para>
+    /// </summary>
+    private string TargetNameWithPlayerInfo(IBattleChara target)
+    {
+        var name = target.Name.TextValue;
+        if (string.IsNullOrWhiteSpace(name)) name = AccessibilityStrings.TargetFallbackName;
+
+        if (target is not IGameObject obj || !PlayerInfo.IsPlayer(obj)) return name;
+
+        var jobId   = PlayerInfo.JobId(obj);
+        var job     = PlayerInfo.JobName(_data, obj);
+        var level   = PlayerInfo.Level(obj);
+        var inGroup = CombatSide.IsGroupMember(obj);
+
+        _log.Info($"[Ziel] Spieler '{name}': klasse={jobId} ('{job}') stufe={level} gruppe={inGroup}");
+
+        return $"{name}, {AccessibilityStrings.PlayerDetail(job, level, inGroup)}";
     }
 
     // Auf Tastendruck: aktueller SP-Stand (Sammelpunkte, engl. GP). Sammler
