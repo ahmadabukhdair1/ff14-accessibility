@@ -290,6 +290,7 @@ public sealed class SpokenMenu
         {
             if (_stack.Count <= 1) { Close(); return true; }
             _stack.RemoveAt(_stack.Count - 1);
+            RebuildCurrent();
             SpeakCursor(withTitle: true);
             return true;
         }
@@ -516,6 +517,21 @@ public sealed class SpokenMenu
         }
 
         // Rebuild in place so the row now reports its new state.
+        RebuildCurrent();
+    }
+
+    /// <summary>
+    /// Rebuilds the top level in place, keeping the cursor, so its labels report
+    /// the config as it is NOW.
+    ///
+    /// Also called when BACKING OUT of a submenu: a choice made one level down
+    /// (a chat channel set to "Text" or to a voice, 2026-09-14) changes the
+    /// parent row's label, and without this the parent spoke its old state on the
+    /// way back - a row contradicting what the player had just chosen.
+    /// </summary>
+    private void RebuildCurrent()
+    {
+        var level = Current;
         if (level.Rebuild == null) return;
         try
         {

@@ -165,6 +165,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly AoeWarningService  _aoeWarn;
     // [Warnstimme] Zweiter Sprachkanal fuer die vier Kampfwarnungen.
     private readonly WarningVoiceService _warnVoice;
+    // [Chatstimme] Eigener Sprachkanal fuer den Chat, je Kanal mit eigener Stimme.
+    private readonly ChatVoiceService _chatVoice;
     private readonly VitalsService      _vitals;
     private readonly PartyMonitorService _partyMonitor;
     private readonly HeadingService     _heading;
@@ -566,14 +568,20 @@ public sealed class Plugin : IDalamudPlugin
                 if (MessageHistoryService.ChannelKey(channel) == key) return true;
             return false;
         };
+        // [Chatstimme] Vor beiden Lesern gebaut, die ihre Zeilen darueber sagen.
+        _chatVoice = new ChatVoiceService(_config, _tolk, Log, _chatFilters);
+        // Erst jetzt: der Fenster-Leser wird weit oben gebaut, und die NPC-Dialoge
+        // muessen dieselbe Stimme nehmen wie ihr Chat-Echo (siehe
+        // ChatVoiceService.SpeakDialogueWindow).
+        _uiReader.ChatVoice = _chatVoice;
         _chatReader = new ChatReaderService(ChatGui, _tolk, _config, _history, ObjectTable, Log, _chatFilters,
-                                            () => !_config.UseLegacyChatSystem);
+                                            () => !_config.UseLegacyChatSystem, _chatVoice);
         // Der alte Leser haengt an derselben Chat-Quelle. Er archiviert immer und
         // spricht nur, solange das alte System eingeschaltet ist - genau
         // spiegelbildlich zum neuen, so dass zu jedem Zeitpunkt genau EINER von
         // beiden redet.
         _legacyChatReader = new LegacyChatReaderService(ChatGui, _tolk, _config, _legacyHistory, ObjectTable, Log,
-                                                        () => _config.UseLegacyChatSystem);
+                                                        () => _config.UseLegacyChatSystem, _chatVoice);
         _chatChannel = new ChatChannelService(_legacyHistory, _tolk, Log);
         // [Chat-Puffer] Direkt nach dem Leser gebaut, dessen Archivweg und dessen Zaehler
         // gelaufener Nachrichten es beide braucht. Es tut nichts, solange das Log-Modul
@@ -614,7 +622,7 @@ public sealed class Plugin : IDalamudPlugin
         _menu       = new SpokenMenu(_tolk, Log);
         _menuInput  = new MenuInput(KeyState, Log, SpokenMenu.AllKeys());
         _options    = new OptionsMenu(_config, () => PluginInterface.SavePluginConfig(_config),
-                                      _tolk, Log, _heading, _chatFilters, _aoeWarn, _warnVoice,
+                                      _tolk, Log, _heading, _chatFilters, _aoeWarn, _warnVoice, _chatVoice,
                                       // [Reihenfolge] Die drei Dienste, die die
                                       // sortierbaren Listen fuehren. Alle drei sind
                                       // hier oben schon gebaut.
@@ -932,6 +940,7 @@ public sealed class Plugin : IDalamudPlugin
                 break;
             case "stop":
                 _tolk.Silence();
+                _chatVoice.Silence();
                 break;
             case "status":
                 _combat.AnnounceStatus();
@@ -2205,7 +2214,9 @@ public sealed class Plugin : IDalamudPlugin
             if (_charaMake.IsActive) _charaMake.ReadSummary();
             else                     _uiReader.ReadCurrentFocus();
         }
-        if (IsJustPressed(_config.KeySilence))       _tolk.Silence();
+        // [Chatstimme] Die Stopptaste leert auch deren Warteschlange - sonst liefe
+        // eine lange Reihe Chatzeilen nach dem Druck einfach weiter.
+        if (IsJustPressed(_config.KeySilence))       { _tolk.Silence(); _chatVoice.Silence(); }
         if (IsJustPressed(_config.KeyCombatStatus))  _combat.AnnounceStatus();
         if (IsJustPressed(_config.KeyTargetStatus))  _combat.AnnounceTargetStatus();
         if (IsJustPressed(_config.KeyDeepFloor))     AnnounceDeepFloor();
@@ -3130,6 +3141,7 @@ public sealed class Plugin : IDalamudPlugin
         _beacon.Dispose();
         _aoeWarn.Dispose();
         _warnVoice.Dispose();
+        _chatVoice.Dispose();
         _cue.Dispose();
         _vitals.Dispose();
         _partyMonitor.Dispose();

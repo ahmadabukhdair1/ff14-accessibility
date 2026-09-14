@@ -152,23 +152,69 @@ public sealed class TolkService : IDisposable
     }
 
     /// <summary>
+    /// Files <paramref name="text"/> as SPOKEN although it went out on another
+    /// voice (ChatVoiceService). The echo checks in this class ask only this
+    /// history; a chat line said by the chat voice and then again as a toast
+    /// would otherwise be heard twice. Unlike <see cref="RememberSpokenVariant"/>
+    /// it does not claim another source said it, so it never feeds
+    /// <see cref="WasSpokenElsewhere"/>.
+    /// </summary>
+    public void RememberSpoken(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        text = Sanitize(text);
+        if (text.Length == 0) return;
+        Remember(text);
+    }
+
+    /// <summary>
     /// True if ANOTHER source already spoke <paramref name="text"/> within
     /// <paramref name="seconds"/> - i.e. it was filed via
     /// <see cref="RememberSpokenVariant"/>. Unlike <see cref="WasRecentlySpoken"/>
     /// this never matches the caller's own earlier announcements, so a line that
     /// genuinely occurs twice still gets through.
     /// </summary>
+    ///
+    /// ALSO TRUE WHEN THE TEXT IS SEVERAL FILED WORDINGS IN A ROW. Measured
+    /// 2026-09-14 11:10:05-11:10:09: Talk split ONE chat line over two window
+    /// pages, mid-sentence ("... verkrochen, ich" / "hab's genau gesehen! ..."),
+    /// and the chat log then carried the whole line. Neither page equalled it, so
+    /// the line was read a second time. The pages are matched in the order they
+    /// were filed and must cover the text completely - a text with anything left
+    /// over is not an echo.
+    ///
+    /// WHITESPACE IS IGNORED in the comparison: the window can break a page with a
+    /// line-break payload, which Sanitize drops without leaving a space, while the
+    /// chat line has a space there.
     public bool WasSpokenElsewhere(string text, double seconds)
     {
         if (string.IsNullOrEmpty(text)) return false;
-        text = Sanitize(text);
-        if (text.Length == 0) return false;
+        var wanted = WithoutWhitespace(Sanitize(text));
+        if (wanted.Length == 0) return false;
         var now = Stopwatch.GetTimestamp();
         var window = (long)(seconds * Stopwatch.Frequency);
+
+        var recent = new List<string>();
         foreach (var (t, tick) in _variants)
-            if (t == text && now - tick <= window) return true;
+            if (now - tick <= window) recent.Add(WithoutWhitespace(t));
+
+        for (var start = 0; start < recent.Count; start++)
+        {
+            if (recent[start].Length == 0 || !wanted.StartsWith(recent[start], StringComparison.Ordinal)) continue;
+            var pos = recent[start].Length;
+            for (var next = start + 1; next < recent.Count && pos < wanted.Length; next++)
+            {
+                var part = recent[next];
+                if (part.Length > 0 && string.CompareOrdinal(wanted, pos, part, 0, part.Length) == 0)
+                    pos += part.Length;
+            }
+            if (pos >= wanted.Length) return true;
+        }
         return false;
     }
+
+    private static string WithoutWhitespace(string text) =>
+        System.Text.RegularExpressions.Regex.Replace(text, @"\s+", string.Empty);
 
     /// <summary>True if <paramref name="text"/> (after sanitizing) was spoken
     /// within the last <paramref name="seconds"/> seconds.</summary>

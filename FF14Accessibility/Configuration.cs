@@ -619,6 +619,29 @@ public sealed class Configuration : IPluginConfiguration
     // nicht kennt, fällt auf dieselbe Automatik zurück.
     public string WarningVoiceName = string.Empty;
 
+    // ── Chatstimme (dritter Sprachkanal, SAPI) ────────────────────────────────
+    //
+    // Spielerwunsch 2026-09-14: "chatt optionen wie bei dem skuaddon, dass der
+    // chatt mit einer anderen sprachausgabe vorgelesen werden kann". Nachgebaut
+    // nach SkuChat (Options.lua, BuildOutputModeNode): je Kanal Stumm, Text oder
+    // Blizzard TTS mit eigener Stimme. Siehe ChatVoiceService.
+    //
+    // Kanal -> Name der SAPI-Stimme. Kein Eintrag = "Text" (Screenreader), so
+    // wie in Sku ein Kanal ohne Stimme ueber den Text-Weg laeuft. Ob der Kanal
+    // ueberhaupt spricht, steht weiter in den bestehenden Sprachschaltern -
+    // "Stumm" ist dort ein "aus". Schluessel siehe ChatVoiceKeys.
+    public Dictionary<string, string> ChatVoice = new();
+
+    // Tempo und Lautstaerke fuer ALLE Chatstimmen zusammen, wie Skus
+    // "TTS Geschwindigkeit" und "TTS Lautstärke". Voreinstellung sind Skus
+    // eigene Zahlen (WowTtsSpeed = 3, WowTtsVolume = 50), die Sku unveraendert an
+    // C_VoiceChat.SpeakText gibt. NICHT GEPRUEFT ist, ob Blizzards Tempo-Skala
+    // dieselbe ist wie die von SAPI (-10..10) - im Sku-Quelltext steht die Skala
+    // nicht. Die Lautstaerke 0..100 steht hier als 0..1 wie jede andere
+    // Lautstaerke des Plugins.
+    public int ChatVoiceRate = 3;
+    public float ChatVoiceVolume = 0.5f;
+
     // Fähigkeit-bereit-Ansage (User-Wunsch 2026-07-30): wenn eine Fähigkeit mit
     // echter Abklingzeit (oGCD) wieder einsatzbereit ist, Ton + Name ansagen.
     // GCD-Angriffsskills ausgeschlossen (CooldownService). STANDARD AN.

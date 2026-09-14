@@ -54,6 +54,8 @@ public sealed class OptionsMenu
     // [Warnstimme] Nur zum Vorhoeren einer Stimme und um zu wissen, ob das
     // System ueberhaupt eine anbietet - gesprochen wird von hier aus nichts.
     private readonly WarningVoiceService _warnVoice;
+    // [Chatstimme] Stimmenliste und Probe fuer die Kanalzeilen.
+    private readonly ChatVoiceService _chatVoice;
     // [Reihenfolge] Die drei Listen, die der Spieler sortieren darf, kommen von
     // ihren eigenen Diensten - das Menue fuehrt keine eigene Kopie. Eine zweite
     // Liste derselben Kategorien waere genau die Abweichung, die niemand bemerkt,
@@ -79,6 +81,7 @@ public sealed class OptionsMenu
     public OptionsMenu(Configuration config, Action save, TolkService tolk, IPluginLog log,
                        HeadingService heading, GameChatFilters chatFilters,
                        AoeWarningService aoeWarning, WarningVoiceService warnVoice,
+                       ChatVoiceService chatVoice,
                        NavigationService nav, LegacyChatHistoryService legacyHistory,
                        MessageHistoryService history,
                        DungeonRouteService dungeonRoute, Action fetchDungeonPaths,
@@ -97,6 +100,7 @@ public sealed class OptionsMenu
         _chatFilters = chatFilters;
         _aoeWarning = aoeWarning;
         _warnVoice  = warnVoice;
+        _chatVoice  = chatVoice;
         _nav = nav;
         _legacyHistory = legacyHistory;
         _history = history;
@@ -543,67 +547,242 @@ public sealed class OptionsMenu
         Rebuild = BuildChatChannels,
         Entries =
         {
-            ChannelToggle(ChannelName(LegacyChatHistoryService.Category.Dialogue),
+            LegacyChannelOutput(LegacyChatHistoryService.Category.Dialogue,
                           () => _config.ReadNpcDialogue,       v => _config.ReadNpcDialogue = v),
-            ChannelToggle(ChannelName(LegacyChatHistoryService.Category.Say),
+            LegacyChannelOutput(LegacyChatHistoryService.Category.Say,
                           () => _config.ReadSayChat,           v => _config.ReadSayChat = v),
             // Rufen deckt auch /bruellen, Gruppe auch die weltuebergreifende
             // Gruppe, Fluestern beide Richtungen - so steht es in ShouldSpeak. Ein
             // Kanal, den das Spiel getrennt führt, das Plugin aber nicht, bekommt
             // hier keine eigene Zeile: sie würde eine Trennung versprechen, die
             // der Leser nicht macht.
-            ChannelToggle(ChannelName(LegacyChatHistoryService.Category.Shout),
+            LegacyChannelOutput(LegacyChatHistoryService.Category.Shout,
                           () => _config.ReadShoutChat,         v => _config.ReadShoutChat = v),
-            ChannelToggle(ChannelName(LegacyChatHistoryService.Category.Party),
+            LegacyChannelOutput(LegacyChatHistoryService.Category.Party,
                           () => _config.ReadPartyChat,         v => _config.ReadPartyChat = v),
-            ChannelToggle(ChannelName(LegacyChatHistoryService.Category.Alliance),
+            LegacyChannelOutput(LegacyChatHistoryService.Category.Alliance,
                           () => _config.ReadAllianceChat,      v => _config.ReadAllianceChat = v),
-            ChannelToggle(ChannelName(LegacyChatHistoryService.Category.Tell),
+            LegacyChannelOutput(LegacyChatHistoryService.Category.Tell,
                           () => _config.ReadTellChat,          v => _config.ReadTellChat = v),
-            ChannelToggle(ChannelName(LegacyChatHistoryService.Category.FreeCompany),
+            LegacyChannelOutput(LegacyChatHistoryService.Category.FreeCompany,
                           () => _config.ReadFCChat,            v => _config.ReadFCChat = v),
-            ChannelToggle(ChannelName(LegacyChatHistoryService.Category.System),
+            LegacyChannelOutput(LegacyChatHistoryService.Category.System,
                           () => _config.ReadSystemMessages,    v => _config.ReadSystemMessages = v),
-            ChannelToggle(AccessibilityStrings.OptChatGathering,
+            ChannelOutput(AccessibilityStrings.OptChatGathering, ChatVoiceKeys.LegacyGathering,
                           () => _config.ReadGatheringMessages, v => _config.ReadGatheringMessages = v),
             // AnnounceLoot heißt anders als seine Nachbarn, wirkt aber an genau
             // derselben Stelle: es ist der Schalter für XivChatType.LootNotice in
             // ShouldSpeak und sonst nirgends (geprüft 2026-08-16). Also gehört er
             // hierher und nicht zu den Ansagen.
-            ChannelToggle(ChannelName(LegacyChatHistoryService.Category.Loot),
+            LegacyChannelOutput(LegacyChatHistoryService.Category.Loot,
                           () => _config.AnnounceLoot,          v => _config.AnnounceLoot = v),
+
+            // [Chatstimme] Tempo und Lautstaerke fuer alle Kanaele zusammen, wie
+            // in Sku - am Ende der Kanalliste, weil sie nur zusammen mit ihr Sinn
+            // ergeben und in beiden Chatsystemen an derselben Stelle stehen sollen.
+            ChatVoiceRate(),
+            Volume(AccessibilityStrings.OptChatVoiceVolume, () => _config.ChatVoiceVolume, v => _config.ChatVoiceVolume = v),
         },
     };
+
+    /// <summary>Eine Kanalzeile des gewohnten Systems: Name und Stimmen-Schluessel
+    /// kommen beide aus der Kategorie, damit sie nicht auseinanderlaufen.</summary>
+    private MenuEntry LegacyChannelOutput(LegacyChatHistoryService.Category category,
+                                          Func<bool> get, Action<bool> set) =>
+        ChannelOutput(ChannelName(category), ChatVoiceKeys.Legacy(category.ToString()), get, set);
 
     /// <summary>Der Name, unter dem die Nachlese diesen Kanal führt. Eine Quelle für
     /// beides, damit Menü und Browser nicht auseinanderlaufen können.</summary>
     private static string ChannelName(LegacyChatHistoryService.Category category) =>
         AccessibilityStrings.LegacyChatCategoryName(category);
 
+    // ── [Chatstimme] Ausgabe je Kanal ─────────────────────────────
+
     /// <summary>
-    /// Wie <see cref="Toggle"/>, sagt beim ABSCHALTEN aber dazu, dass der Kanal
-    /// weiter nachlesbar bleibt.
+    /// Eine Kanalzeile mit Skus Ausgabewahl: Stumm, Text oder Blizzard TTS mit
+    /// eigener Stimme (SkuChat/Options.lua, BuildOutputModeNode). Bis 2026-09-14
+    /// war die Zeile ein Schalter an/aus; die Zeile nennt ihren Zustand weiter
+    /// selbst, "Flüstern (Text)", so dass das Durchblättern ohne Öffnen reicht.
     ///
-    /// Der Satz steht hier und nicht in der Beschriftung, weil er nur einmal
-    /// gebraucht wird: in dem Moment, in dem der Spieler etwas stummschaltet und
-    /// sich fragt, ob es damit weg ist. Beim Durchblättern wäre er neun Mal im Weg.
+    /// KEIN NEUER SCHALTER DAHINTER. "Stumm" und "Text" schreiben genau den
+    /// Sprachschalter, den die Zeile vorher umgelegt hat (<paramref name="set"/>);
+    /// nur die Stimme ist neu und liegt in <see cref="Configuration.ChatVoice"/>.
+    /// Was unter "Chat-Register" an- und ausgeschaltet wird, ist also weiterhin
+    /// dieselbe Einstellung.
     /// </summary>
-    private MenuEntry ChannelToggle(string name, Func<bool> get, Action<bool> set) => new()
+    private MenuEntry ChannelOutput(string name, string voiceKey, Func<bool> get, Action<bool> set) => new()
     {
-        Label    = AccessibilityStrings.OptionToggle(name, get()),
-        StayOpen = true,
-        Activate = () =>
-        {
-            var value = !get();
-            set(value);
-            Persist();
-            var spoken = AccessibilityStrings.OptionToggled(name, value);
-            if (!value) spoken += " " + AccessibilityStrings.ChatChannelStillArchived;
-            _tolk.SpeakInterrupt(spoken);
-            _log.Info($"[Einstellungen] Chat-Kanal {name} -> {(value ? "an" : "aus")} "
-                      + "(Nachlese unberuehrt)");
-        },
+        Label   = AccessibilityStrings.ChatOutputRow(name, OutputState(voiceKey, get())),
+        Submenu = () => BuildChannelOutput(name, voiceKey, get, set),
     };
+
+    private string OutputState(string voiceKey, bool on)
+    {
+        if (!on) return AccessibilityStrings.ChatOutputMuted;
+        var voice = ChatVoiceKeys.VoiceFor(_config, voiceKey);
+        return voice == null
+            ? AccessibilityStrings.ChatOutputText
+            : AccessibilityStrings.ChatOutputTtsWithVoice(voice);
+    }
+
+    private MenuLevel BuildChannelOutput(string name, string voiceKey, Func<bool> get, Action<bool> set)
+    {
+        var level = new MenuLevel
+        {
+            Title   = name,
+            Rebuild = () => BuildChannelOutput(name, voiceKey, get, set),
+        };
+
+        level.Entries.Add(new MenuEntry
+        {
+            Label    = AccessibilityStrings.ChatOutputMuted,
+            StayOpen = true,
+            Activate = () =>
+            {
+                // Die Stimme bleibt gespeichert: schaltet der Spieler den Kanal
+                // spaeter unter "Chat-Register" wieder an, spricht er in der
+                // Stimme, die er zuletzt gewaehlt hat - so wie Sku beim Stummschalten
+                // die Stimme ebenfalls nicht vergisst.
+                set(false);
+                Persist();
+                // Nur hier der Satz zur Nachlese: in dem Moment, in dem etwas
+                // stumm wird, fragt man sich, ob es damit weg ist.
+                _tolk.SpeakInterrupt(AccessibilityStrings.ChatOutputSet(name, AccessibilityStrings.ChatOutputMuted)
+                                     + " " + AccessibilityStrings.ChatChannelStillArchived);
+                _log.Info($"[Einstellungen] Chat-Kanal {name} -> stumm (Nachlese unberuehrt)");
+            },
+        });
+
+        level.Entries.Add(new MenuEntry
+        {
+            Label    = AccessibilityStrings.ChatOutputText,
+            StayOpen = true,
+            Activate = () =>
+            {
+                set(true);
+                _config.ChatVoice.Remove(voiceKey);
+                Persist();
+                _tolk.SpeakInterrupt(AccessibilityStrings.ChatOutputSet(name, AccessibilityStrings.ChatOutputText));
+                _log.Info($"[Einstellungen] Chat-Kanal {name} -> Text (Screenreader)");
+            },
+        });
+
+        var on = get();
+        var voice = ChatVoiceKeys.VoiceFor(_config, voiceKey);
+        level.Entries.Add(new MenuEntry
+        {
+            Label   = on && voice != null
+                          ? AccessibilityStrings.ChatOutputTtsWithVoice(voice)
+                          : AccessibilityStrings.ChatOutputTts,
+            Submenu = () => BuildChannelVoices(name, voiceKey, set),
+        });
+
+        // Auf dem Zustand stehen, der gerade gilt.
+        level.Cursor = !on ? 0 : voice == null ? 1 : 2;
+        return level;
+    }
+
+    /// <summary>
+    /// Die Stimmen fuer einen Kanal. Jede wird beim Anwaehlen sofort gesetzt und
+    /// sagt die Quittung SELBST - entschieden wird am Ohr, und die Zeile bleibt
+    /// offen, damit man mehrere hintereinander probieren kann.
+    /// </summary>
+    private MenuLevel BuildChannelVoices(string name, string voiceKey, Action<bool> set)
+    {
+        var level = new MenuLevel
+        {
+            Title   = AccessibilityStrings.ChatOutputTts,
+            Rebuild = () => BuildChannelVoices(name, voiceKey, set),
+        };
+
+        if (!_chatVoice.IsAvailable || _chatVoice.InstalledVoices.Count == 0)
+        {
+            level.Entries.Add(new MenuEntry
+            {
+                Label    = AccessibilityStrings.ChatVoiceUnavailable,
+                StayOpen = true,
+                Activate = () => _tolk.SpeakInterrupt(AccessibilityStrings.ChatVoiceUnavailable),
+            });
+            return level;
+        }
+
+        foreach (var installed in _chatVoice.InstalledVoices)
+        {
+            var voice = installed;                  // je Durchlauf festgehalten
+            level.Entries.Add(new MenuEntry
+            {
+                Label    = voice,
+                StayOpen = true,
+                Activate = () =>
+                {
+                    set(true);
+                    _config.ChatVoice[voiceKey] = voice;
+                    Persist();
+
+                    var confirm = AccessibilityStrings.ChatOutputSet(
+                        name, AccessibilityStrings.ChatOutputTtsWithVoice(voice));
+                    // Bleibt die Probe stumm (Lautstaerke null, SAPI weg), MUSS der
+                    // Screenreader es sagen - sonst waere die Wahl von einem
+                    // Fehlschlag nicht zu unterscheiden.
+                    if (!_chatVoice.PlayPreview(voice, confirm))
+                        _tolk.SpeakInterrupt(confirm);
+
+                    _log.Info($"[Einstellungen] Chat-Kanal {name} -> TTS '{voice}'");
+                },
+            });
+        }
+
+        var current = ChatVoiceKeys.VoiceFor(_config, voiceKey);
+        level.Cursor = current == null ? 0 : Math.Max(0, _chatVoice.InstalledVoices.ToList().IndexOf(current));
+        return level;
+    }
+
+    /// <summary>Skus "TTS Geschwindigkeit": ein Tempo fuer alle Chatstimmen.</summary>
+    private MenuEntry ChatVoiceRate() => new()
+    {
+        Label   = AccessibilityStrings.OptionChoice(
+                      AccessibilityStrings.OptChatVoiceRate,
+                      AccessibilityStrings.VoiceRateName(_config.ChatVoiceRate)),
+        Submenu = BuildChatVoiceRates,
+    };
+
+    private MenuLevel BuildChatVoiceRates()
+    {
+        var level = new MenuLevel
+        {
+            Title   = AccessibilityStrings.OptChatVoiceRate,
+            Rebuild = BuildChatVoiceRates,
+        };
+
+        foreach (var step in AccessibilityStrings.ChatVoiceRateSteps)
+        {
+            var value = step;                       // je Durchlauf festgehalten
+            level.Entries.Add(new MenuEntry
+            {
+                Label    = AccessibilityStrings.VoiceRateName(value),
+                StayOpen = true,
+                Activate = () =>
+                {
+                    _config.ChatVoiceRate = value;
+                    Persist();
+                    var confirm = AccessibilityStrings.VoiceRateSet(AccessibilityStrings.VoiceRateName(value));
+                    if (!_chatVoice.PlayPreview(null, confirm))
+                        _tolk.SpeakInterrupt(confirm);
+                    _log.Info($"[Einstellungen] TTS Geschwindigkeit Chat -> {value}");
+                },
+            });
+        }
+
+        // Die Voreinstellung ist Skus 3 und damit keine der Stufen - also die
+        // naechstgelegene, statt stumm oben anzufangen.
+        var steps = AccessibilityStrings.ChatVoiceRateSteps;
+        var best = 0;
+        for (var i = 1; i < steps.Length; i++)
+            if (Math.Abs(steps[i] - _config.ChatVoiceRate) < Math.Abs(steps[best] - _config.ChatVoiceRate))
+                best = i;
+        level.Cursor = best;
+        return level;
+    }
 
     // ── Chat-Kanäle des NEUEN Systems (flach über alle Register) ──
 
@@ -668,8 +847,9 @@ public sealed class OptionsMenu
         {
             var key = channel!.Key;
             var showing = byChannel[key];
-            level.Entries.Add(ChannelToggle(
+            level.Entries.Add(ChannelOutput(
                 channel.Name,
+                ChatVoiceKeys.Channel(key),
                 () => IsChannelAudible(key, showing),
                 on => SetChannelInAllTabs(key, showing, on)));
         }
@@ -677,15 +857,22 @@ public sealed class OptionsMenu
         // Die beiden Zeilen, die zu keinem Register gehoeren - woertlich aus
         // BuildChatTabs uebernommen, damit hier nichts fehlt, was es dort gibt.
         if (level.Entries.Count > 0)
-            level.Entries.Add(ChannelToggle(
+            level.Entries.Add(ChannelOutput(
                 AccessibilityStrings.OptChatUnfiltered,
+                ChatVoiceKeys.Unfiltered,
                 () => ChatTabSpeech.IsOn(_config, ChatTabSpeech.UnfilteredIndex, true),
                 on => ChatTabSpeech.Set(_config, ChatTabSpeech.UnfilteredIndex, on)));
         else
-            level.Entries.Add(ChannelToggle(
+            level.Entries.Add(ChannelOutput(
                 AccessibilityStrings.OptChatFallback,
+                ChatVoiceKeys.Fallback,
                 () => ChatTabSpeech.IsOn(_config, ChatTabSpeech.FallbackIndex, true),
                 on => ChatTabSpeech.Set(_config, ChatTabSpeech.FallbackIndex, on)));
+
+        // [Chatstimme] Dieselben zwei Zeilen wie am Ende der gewohnten Liste.
+        level.Entries.Add(ChatVoiceRate());
+        level.Entries.Add(Volume(AccessibilityStrings.OptChatVoiceVolume,
+                                 () => _config.ChatVoiceVolume, v => _config.ChatVoiceVolume = v));
 
         return level;
     }

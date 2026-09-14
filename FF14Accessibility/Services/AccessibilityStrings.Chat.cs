@@ -243,13 +243,63 @@ public static partial class AccessibilityStrings
         1 or 2 => IsGerman ? "Etwas schneller" : "Slightly faster",
         3 or 4 => IsGerman ? "Schnell" : "Fast",
         5 or 6 => IsGerman ? "Sehr schnell" : "Very fast",
-        _ => IsGerman ? "Am schnellsten" : "Fastest",
+        7 or 8 => IsGerman ? "Am schnellsten" : "Fastest",
+        _ => IsGerman ? "Höchstes Tempo" : "Maximum speed",
     };
+
+    /// <summary>
+    /// [Chatstimme] Die Tempostufen der Chatstimme - bis zum Ende der SAPI-Skala.
+    ///
+    /// ANDERS ALS BEI DER WARNSTIMME ist 10 dabei (Spielerin 2026-09-14: Hedda auf
+    /// "Schnell" ist zu langsam). Der Grund, 10 dort wegzulassen, war die
+    /// Verständlichkeit im Ernstfall; im Chat entscheidet das geübte Ohr, und das
+    /// liest mit Sku schon lange schnelle Stimmen. Unten fehlen die langsamen
+    /// Stufen, weil sie im Chat niemand gesucht hat.
+    /// </summary>
+    public static readonly int[] ChatVoiceRateSteps = { 0, 2, 4, 6, 8, 10 };
 
     /// <summary>Bestätigung nach der Wahl einer Tempostufe - nur nötig, wenn die
     /// Probe stumm blieb.</summary>
     public static string VoiceRateSet(string value) =>
         IsGerman ? $"Tempo {value}." : $"Speed {value}.";
+
+    // ── [Chatstimme] ──────────────────────────────────────────────
+    //
+    // DIE WÖRTER SIND SKUS (locales/deDE.lua bzw. die englischen Schlüssel):
+    // "Stumm", "Text", "TTS Stimme", "TTS Geschwindigkeit", "TTS Lautstärke" -
+    // Spielerentscheidung 2026-09-14. EINE AUSNAHME: Skus "Blizzard TTS" heißt
+    // hier nur "TTS" (Spielerwunsch 2026-09-14, "das solltest du umbenennen auf
+    // einfach nur tts") - in FF14 spricht nicht Blizzard, sondern Windows.
+    // Die Zeilenform "Name (Zustand)" ist die aus SkuChat/Options.lua,
+    // BuildOutputModeNode.
+
+    /// <summary>Skus "Inactive" / "Stumm".</summary>
+    public static string ChatOutputMuted => IsGerman ? "Stumm" : "Inactive";
+
+    /// <summary>Skus "Text": über den Screenreader.</summary>
+    public static string ChatOutputText => "Text";
+
+    /// <summary>Skus "Blizzard TTS", hier nur "TTS": eine SAPI-Stimme neben dem Screenreader.</summary>
+    public static string ChatOutputTts => "TTS";
+
+    /// <summary>Zustand mit Stimme: "TTS: Hedda".</summary>
+    public static string ChatOutputTtsWithVoice(string voice) => $"TTS: {voice}";
+
+    /// <summary>Eine Kanalzeile mit ihrem Zustand: "Flüstern (Text)".</summary>
+    public static string ChatOutputRow(string name, string state) => $"{name} ({state})";
+
+    /// <summary>Quittung nach der Wahl.</summary>
+    public static string ChatOutputSet(string name, string state) => $"{name}: {state}.";
+
+    public static string OptChatVoiceRate => IsGerman ? "TTS Geschwindigkeit" : "TTS speed";
+    public static string OptChatVoiceVolume => IsGerman ? "TTS Lautstärke" : "TTS volume";
+    public static string OptChatVoiceName => IsGerman ? "TTS Stimme" : "TTS voice";
+
+    /// <summary>Statt einer leeren Stimmenliste - eine leere Auswahl ohne Grund
+    /// wäre von einem Fehler des Plugins nicht zu unterscheiden.</summary>
+    public static string ChatVoiceUnavailable => IsGerman
+        ? "Keine Sprachausgabe des Systems verfügbar. Der Chat wird über den Screenreader vorgelesen."
+        : "No system speech available. Chat is read through the screen reader.";
 
     public static string OptSkillReady => IsGerman ? "Fähigkeit bereit" : "Ability ready";
     public static string OptSkillReadyVolume => IsGerman ? "Fähigkeit bereit Lautstärke" : "Ability ready volume";
