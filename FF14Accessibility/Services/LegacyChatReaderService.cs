@@ -38,10 +38,15 @@ public sealed class LegacyChatReaderService : IDisposable
     private readonly IObjectTable _objectTable;
     private readonly IPluginLog _log;
     private readonly Func<bool> _isActive;
+    // [Chatstimme] Sagt die fertige Zeile mit der Stimme ihres Kanals oder ueber
+    // den Screenreader - siehe ChatVoiceService.
+    private readonly ChatVoiceService _chatVoice;
 
     public LegacyChatReaderService(IChatGui chatGui, TolkService tolk, Configuration config,
-        LegacyChatHistoryService history, IObjectTable objectTable, IPluginLog log, Func<bool> isActive)
+        LegacyChatHistoryService history, IObjectTable objectTable, IPluginLog log, Func<bool> isActive,
+        ChatVoiceService chatVoice)
     {
+        _chatVoice = chatVoice;
         _chatGui = chatGui;
         _tolk = tolk;
         _config = config;
@@ -167,10 +172,7 @@ public sealed class LegacyChatReaderService : IDisposable
                                     or XivChatType.Yell or XivChatType.CrossParty
                                     or XivChatType.TellOutgoing;
 
-        if (interrupt)
-            _tolk.SpeakInterrupt(fullText);
-        else
-            _tolk.Speak(fullText);
+        _chatVoice.SpeakChatLine(fullText, ChatVoiceKeys.ForLegacyKind(msg.LogKind), interrupt);
 
         // What went into the dedup history is the PREFIXED line ("System: ..."),
         // but a toast arriving right afterwards carries the bare sentence and
