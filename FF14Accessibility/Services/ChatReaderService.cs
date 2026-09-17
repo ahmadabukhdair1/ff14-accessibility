@@ -91,10 +91,15 @@ public sealed class ChatReaderService : IDisposable
     /// </summary>
     private readonly Func<bool> _isActive;
 
+    /// <summary>[Chatstimme] Sagt die fertige Zeile mit der Stimme ihres Kanals oder
+    /// ueber den Screenreader - siehe ChatVoiceService.</summary>
+    private readonly ChatVoiceService _chatVoice;
+
     public ChatReaderService(IChatGui chatGui, TolkService tolk, Configuration config,
         MessageHistoryService history, IObjectTable objectTable, IPluginLog log,
-        GameChatFilters filters, Func<bool> isActive)
+        GameChatFilters filters, Func<bool> isActive, ChatVoiceService chatVoice)
     {
+        _chatVoice = chatVoice;
         _chatGui = chatGui;
         _tolk = tolk;
         _config = config;
@@ -154,6 +159,9 @@ public sealed class ChatReaderService : IDisposable
         var partner = ExtractTellPartner(msg);
 
         bool speak;
+        // [Chatstimme] Der Kanal, dessen Stimme die Zeile sagt - dort bestimmt, wo
+        // auch entschieden wird, OB sie gesagt wird.
+        string? voiceKey;
         if (state != ChatFilterState.Ready)
         {
             // THE DEGRADED PATH. Everything goes to one
@@ -173,6 +181,7 @@ public sealed class ChatReaderService : IDisposable
             if (state == ChatFilterState.Broken && _isActive()) WarnFallbackOnce();
             _history.Add(_history.EnsureFallbackBuffer(), archived, partner, mirror: false);
             speak = !battleLog && ChatTabSpeech.IsOn(_config, ChatTabSpeech.FallbackIndex, true);
+            voiceKey = ChatVoiceKeys.Fallback;
         }
         else
         {
@@ -189,11 +198,11 @@ public sealed class ChatReaderService : IDisposable
             if (_channels.Count == 0)
             {
                 if (coverage == ChatCoverage.SwitchedOff) return;
-                speak = ArchiveUnfilterable(msg.LogKind, archived, partner, battleLog);
+                speak = ArchiveUnfilterable(msg.LogKind, archived, partner, battleLog, out voiceKey);
             }
             else
             {
-                speak = ArchiveRouted(archived, partner);
+                speak = ArchiveRouted(archived, partner, out voiceKey);
             }
         }
 
@@ -243,10 +252,7 @@ public sealed class ChatReaderService : IDisposable
         // speech-queue note in UIReaderService.PassiveAddons - 208 announcements died
         // that way in one logged session). The `interrupt` set above already excludes
         // them; this note is here so it stays that way.
-        if (interrupt)
-            _tolk.SpeakInterrupt(fullText);
-        else
-            _tolk.Speak(fullText);
+        _chatVoice.SpeakChatLine(fullText, voiceKey, interrupt);
 
         // What went into the dedup history is the PREFIXED line ("System: ..."),
         // but a toast arriving right afterwards carries the bare sentence and
@@ -268,8 +274,12 @@ public sealed class ChatReaderService : IDisposable
     /// answers they are rather than as one method with a hole in the middle.
     /// </summary>
     /// <returns>Whether the line should be read out loud.</returns>
-    private bool ArchiveRouted(string archived, TellTarget? partner)
+    /// <param name="voiceKey">[Chatstimme] The channel of the first route that speaks
+    /// the line - the same route that decided it is spoken, so the voice belongs to a
+    /// channel the player actually hears it through. null when it is not spoken.</param>
+    private bool ArchiveRouted(string archived, TellTarget? partner, out string? voiceKey)
     {
+        voiceKey = null;
 
         // ARCHIVE PER CHANNEL, SPEAK PER TAB, and the two
         // lists are deliberately independent. Membership is what the line IS - the
@@ -318,6 +328,7 @@ public sealed class ChatReaderService : IDisposable
             if (!ChatTabSpeech.IsOn(_config, route.Tab, DefaultSpeechFor(route.Tab))) continue;
             if (!ChatTabSpeech.RowIsOn(_config, route.Tab, route.Channel, route.Row, true)) continue;
             speak = true;
+            voiceKey = ChatVoiceKeys.Channel(route.Channel);
             break;
         }
 
@@ -345,8 +356,14 @@ public sealed class ChatReaderService : IDisposable
     /// either.
     /// </summary>
     /// <returns>Whether the line should be read out loud.</returns>
-    private bool ArchiveUnfilterable(XivChatType kind, string archived, TellTarget? partner, bool battleLog)
+    /// <param name="voiceKey">[Chatstimme] The row "ohne Spielfilter" - EXCEPT for the
+    /// other half of a conversation, which takes its counterpart channel's voice when
+    /// one is set there. An incoming tell has no switch of its own, and a player who
+    /// gave "Flüstern" a voice expects the answers in it too, not only their own lines.</param>
+    private bool ArchiveUnfilterable(XivChatType kind, string archived, TellTarget? partner, bool battleLog,
+                                     out string? voiceKey)
     {
+        voiceKey = ChatVoiceKeys.Unfiltered;
         foreach (var tab in _filters.Tabs)
             _history.Add(_history.EnsureTabBuffer(tab.Index), archived, partner, mirror: false);
 
@@ -375,6 +392,9 @@ public sealed class ChatReaderService : IDisposable
             _history.Add(_history.EnsureChannelBuffer(channel), archived, partner, mirror: false);
             _log.Info($"[Chat] {kind} hat keinen eigenen Schalter - zusaetzlich in den Kanal "
                       + $"'{channel.Name}' von {counterpart} archiviert.");
+
+            if (ChatVoiceKeys.VoiceFor(_config, ChatVoiceKeys.Channel(channel.Key)) != null)
+                voiceKey = ChatVoiceKeys.Channel(channel.Key);
         }
 
         // No tab at all - possible for one frame while the tab list is rebuilding. The

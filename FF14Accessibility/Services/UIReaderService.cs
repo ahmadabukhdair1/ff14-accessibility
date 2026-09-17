@@ -1585,6 +1585,13 @@ public sealed class UIReaderService : IDisposable
     // subtitle announce only its new tail. Cleared when the window closes.
     private readonly Dictionary<string, string> _lastSpokenDialog = [];
 
+    /// <summary>
+    /// [Chatstimme] Sagt Talk- und _BattleTalk-Zeilen mit der Stimme ihres
+    /// Chat-Kanals. Nachtraeglich gesetzt, weil dieser Leser vor den Chat-Diensten
+    /// gebaut wird; null heisst Screenreader wie bisher.
+    /// </summary>
+    public ChatVoiceService? ChatVoice { get; set; }
+
     private unsafe void OnTalkUpdate(AddonEvent type, AddonArgs args)
     {
         var name = args.AddonName;
@@ -1665,7 +1672,21 @@ public sealed class UIReaderService : IDisposable
 
         var probe = string.Join(" ", segments.Select(s => $"[id{s.Id}]='{(s.Text.Length > 40 ? s.Text[..40] + "..." : s.Text)}'"));
         _log.Info($"[Accessibility] {name} Dialog-Nodes: {probe}");
-        _tolk.SpeakInterrupt(spoken);
+        // Die beiden Fenster, die das Spiel in den Chat spiegelt, sprechen mit der
+        // Stimme dieses Chat-Kanals - sonst sagt je nach Reihenfolge mal NVDA, mal
+        // die Chatstimme die Zeile, und wo das Echo nicht erkannt wird, beide
+        // (Spielerin 2026-09-14). TalkSubtitle hat kein Chat-Echo und bleibt beim
+        // Screenreader.
+        Dalamud.Game.Text.XivChatType? mirroredKind = name switch
+        {
+            "Talk"        => Dalamud.Game.Text.XivChatType.NPCDialogue,
+            "_BattleTalk" => Dalamud.Game.Text.XivChatType.NPCDialogueAnnouncements,
+            _             => null,
+        };
+        if (ChatVoice != null && mirroredKind is { } kind)
+            ChatVoice.SpeakDialogueWindow(spoken, kind);
+        else
+            _tolk.SpeakInterrupt(spoken);
         // The very same line arrives in the chat log seconds later as
         // NPCDialogue (measured 2026-08-10: window 21:01:28.852, chat 21:01:34.344,
         // and every line was read out twice). The chat reader checks the BARE
