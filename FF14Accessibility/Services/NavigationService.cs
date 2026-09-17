@@ -3604,7 +3604,18 @@ public sealed class NavigationService
 
         // The kind word stays omitted for nameless objects - the stand-in names
         // the kind already, and "Objekt ohne Namen 2, Objekt" reads twice.
-        var kindWord = name == null ? string.Empty : $", {DescribeKind(obj.ObjectKind)}";
+        //
+        // Fuer einen SPIELER tritt seine KLASSE an die Stelle des Wortes
+        // "Spieler": in der Kategorie Spieler weiss der Hoerer ohnehin, dass dort
+        // Spieler stehen, und in der Kategorie Verbuendete ist die Klasse die
+        // eigentliche Auskunft ("wer laeuft hier mit", Spielerwunsch 2026-09-13).
+        // Meldet das Spiel keine Klasse, bleibt es beim alten Wort - es wird
+        // nichts behauptet (siehe PlayerInfo).
+        string kindWord;
+        if (name == null) kindWord = string.Empty;
+        else if (PlayerInfo.IsPlayer(obj) && PlayerInfo.JobName(_data, obj) is { Length: > 0 } job)
+            kindWord = $", {job}";
+        else kindWord = $", {DescribeKind(obj.ObjectKind)}";
 
         return label + _memory.NumberSuffix(obj, label) + kindWord + _memory.VisitedSuffix(obj);
     }
