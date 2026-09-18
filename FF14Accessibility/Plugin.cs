@@ -141,6 +141,8 @@ public sealed class Plugin : IDalamudPlugin
     // Gehoert zum alten System: Enter schreibt in den Kanal, dessen Nachlese
     // gerade gelesen wurde (v5.67). PR #5 hatte das mitgeloescht.
     private readonly ChatChannelService _chatChannel;
+    // [Chat-Absender] Kontextmenü / Anvisieren aus der Nachlese-Zeile.
+    private readonly ChatPlayerService _chatPlayer;
     // [Chat-Puffer] Die eigenen Filterzeilen und Register des Spiels. Der Chat-Leser
     // fragt sie, welche Register eine eingehende Zeile zeigen wuerden.
     private readonly GameChatFilters    _chatFilters;
@@ -189,6 +191,7 @@ public sealed class Plugin : IDalamudPlugin
     // sie sind, und der Objekt-Browser fuehrt zu den Monstern, die der aktuelle
     // Rang noch verlangt - auch in andere Gebiete.
     // 6.08.8: Tastenliste im Belegen-Menü: Beschreibung nach „Taste X, Skill“.
+    // 6.08.12: Mitstreiter-Fenster (Buddy) — Zusammenfassung + Reiter.
     // 6.08.7: Aktionsleisten-Vorlesen nannte Beschreibungen — zurückgenommen,
     // gemeint war die Tastenliste im Zuweisungsmenü.
     // 6.08.6: Skill-Belegen liest die ActionTransient-Beschreibung nach dem Namen
@@ -196,8 +199,11 @@ public sealed class Plugin : IDalamudPlugin
     // 6.08: Events-Kategorie = Yo-kai-Zonen (Uhr), nicht Sheet-Flag-FATEs.
     // 6.07: Event-Gebiete (AdventEvent/MoonFaire/SpecialFate + planevent.lgb).
     // Craft-Kategorie (Rezepte) bleibt lokal und ist in diesem öffentlichen Stand nicht enthalten.
-    private const string PluginVersion    = "6.08.9";
-    private const string PluginVersionTag = "Wirkungen auf dem Spieler ansagen";
+    // 6.08.18 lokal: Chat-Absender Kontextmenü (Strg+Umschalt+BildAuf) + Numpad3-Ziel.
+    // 6.08.19: Charakterauswahl — eine Ansage (Name, Job, Ort) statt Scan-Sturm.
+    // 6.08.20: Mitstreiter-Taste (PR 27 Port) — Strg+Umschalt+C öffnet/vorliest.
+    private const string PluginVersion    = "6.08.20";
+    private const string PluginVersionTag = "Mitstreiter Taste";
 
     public Plugin()
     {
@@ -622,7 +628,7 @@ public sealed class Plugin : IDalamudPlugin
         _menu       = new SpokenMenu(_tolk, Log);
         _menuInput  = new MenuInput(KeyState, Log, SpokenMenu.AllKeys());
         _options    = new OptionsMenu(_config, () => PluginInterface.SavePluginConfig(_config),
-                                      _tolk, Log, _heading, _chatFilters, _aoeWarn, _warnVoice, _chatVoice,
+                                      _tolk, Log, _heading, _chatFilters, _aoeWarn, _warnVoice, _chatVoice, _cue,
                                       // [Reihenfolge] Die drei Dienste, die die
                                       // sortierbaren Listen fuehren. Alle drei sind
                                       // hier oben schon gebaut.
@@ -1193,6 +1199,7 @@ public sealed class Plugin : IDalamudPlugin
             ("Stufe",          _config.KeyLevelExp),
             ("Erholungsbonus", _config.KeyRestedStatus),
             ("Chocobo-Rang",   _config.KeyChocoboRank),
+            ("Mitstreiter-Fenster", _config.KeyCompanionWindow),
             ("Emote weiter",   _config.KeyEmoteNext),
             ("Emote zurück",   _config.KeyEmotePrev),
             ("Emote ausführen", _config.KeyEmoteDo),
@@ -1215,6 +1222,7 @@ public sealed class Plugin : IDalamudPlugin
             ("Nachlese Ende",   _config.KeyChatReadNewest),
             ("Chat-Registerkarte zurück", _config.KeyChatTabPrev),
             ("Chat-Registerkarte vor",    _config.KeyChatTabNext),
+            ("Chat-Absender Menü",        _config.KeyChatPlayerMenu),
             ("Einstellungen",   _config.KeyOptionsMenu), // [Einstellungsmenue]
             ("Plugin-Liste weiter",  _config.KeyPluginsNext),
             ("Plugin-Liste zurück",  _config.KeyPluginsPrev),
@@ -1577,6 +1585,38 @@ public sealed class Plugin : IDalamudPlugin
 
         Log.Info($"[CopyCoords] Koordinaten {text} kopiert (Welt {player.Position.X:0.0}/{player.Position.Z:0.0}).");
         _tolk.SpeakInterrupt(AccessibilityStrings.CoordsCopied(mapX, mapY));
+    }
+
+    /// <summary>
+    /// Mitstreiter window key: closed → open via the game's <c>/companion</c>
+    /// text command; open → re-read the existing Buddy summary. Neither
+    /// IGameGui nor ClientStructs expose an Open for AddonBuddy (PR 27 /
+    /// game-api Mitstreiter); the Character-window button is mouse-only.
+    /// The spoken "opening" line is intentional — a failed command must not
+    /// look like a silent mod.
+    /// </summary>
+    private void ToggleCompanionWindow()
+    {
+        if (_uiReader.IsCompanionWindowOpen)
+        {
+            _uiReader.AnnounceCompanionWindow();
+            return;
+        }
+
+        _tolk.Speak(AccessibilityStrings.CompanionOpening);
+        try
+        {
+            if (!CommandManager.ProcessCommand("/companion"))
+            {
+                Log.Warning("[Buddy] /companion ProcessCommand false");
+                _tolk.Speak(AccessibilityStrings.CompanionWindowEmpty);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"[Buddy] /companion fehlgeschlagen: {ex.Message}");
+            _tolk.Speak(AccessibilityStrings.CompanionWindowEmpty);
+        }
     }
 
     /// <summary>
@@ -2241,6 +2281,7 @@ public sealed class Plugin : IDalamudPlugin
         if (IsJustPressed(_config.KeyLevelExp))      _combat.AnnounceLevelExp();
         if (IsJustPressed(_config.KeyRestedStatus))  _combat.AnnounceRestedStatus();
         if (IsJustPressed(_config.KeyChocoboRank))   _combat.AnnounceChocoboRank();
+        if (IsJustPressed(_config.KeyCompanionWindow)) ToggleCompanionWindow();
         if (IsJustPressed(_config.KeyReadTasks))     AnnounceActiveTasks();
         if (IsJustPressed(_config.KeyEmoteNext))     _emote.CycleNext();
         if (IsJustPressed(_config.KeyEmotePrev))     _emote.CyclePrev();
@@ -2604,24 +2645,25 @@ public sealed class Plugin : IDalamudPlugin
                 return MarkerResolve.Resolved;
             }
 
-            // Snap the marker onto the walkable mesh so the tight stop range
-            // can be met (marker centres can sit off the mesh); fall back to
-            // the raw position if no floor is found.
-            position = _autoWalk.ResolveFloorPoint(quest.Position) ?? quest.Position;
+            // Prefer a path-connected mesh point: NearestPoint alone can sit on a
+            // disconnected patch, then the walk ends a few metres short (log
+            // 2026-09-09 20:43: "Die Gabe der Unsterblichkeit", shortfall 3,9 m
+            // at stopRange 1; flight ended "Noch 3 Meter nach Norden").
+            position = _autoWalk.ResolveReachablePoint(quest.Position)
+                       ?? _autoWalk.ResolveFloorPoint(quest.Position)
+                       ?? quest.Position;
             name = quest.QuestName;
             heightIsGuess = true;
-            // A LEVE goal is a search AREA, so its middle is the destination, not
-            // its rim: the enemies of a "Such am Zielort" leve only appear once
-            // the player moves around inside the circle, and the circle is wide
-            // (r=50 measured on the La Noscea leves 2026-08-18). Stopping at the
-            // rim left the player 50 m short with nothing to steer by, and a
-            // second Numpad 3 answered "angekommen" right away (log 22:41:25).
-            // Ordinary quest markers keep the rim stop: there the circle means
-            // "the objective is somewhere in here", and its middle is often a
-            // spot the player has no reason to stand on.
-            stopRange = quest.Radius > 0f && quest.Role != QuestMarkerRole.LeveObjective
-                ? MathF.Max(_config.AutoWalkPlaceStopRange, quest.Radius)
-                : _config.AutoWalkPlaceStopRange;
+            // Aim near the centre, not the rim (rim = Radius left the player
+            // outside the trigger). Pure PlaceStop (~1 m) never "arrives" when
+            // the mesh stops ~4 m short of a large map pin. For map goal circles
+            // allow up to 5 m. EventRange walk-ins (QuestTrigger, ~5 m radius)
+            // keep the tight stop so the player actually enters the small volume.
+            stopRange = quest.Role == QuestMarkerRole.QuestTrigger
+                ? _config.AutoWalkPlaceStopRange
+                : quest.Radius > 0f
+                    ? MathF.Max(_config.AutoWalkPlaceStopRange, MathF.Min(5f, quest.Radius))
+                    : _config.AutoWalkPlaceStopRange;
             return MarkerResolve.Resolved;
         }
 

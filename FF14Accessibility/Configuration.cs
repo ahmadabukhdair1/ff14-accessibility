@@ -61,6 +61,10 @@ public sealed class Configuration : IPluginConfiguration
     // ausschliesslich mit Buchstaben fuer die Chatmodi (Alt+R/S/P/L/H/Y/F/A/N/M/T/C,
     // siehe KeyChatTabPrev weiter unten), Alt+L schaltet also den Chat um.
     public string KeyChocoboRank   = "Strg+Umschalt+L"; // Rang, Sterne und fehlende EXP des Begleit-Chocobos ansagen
+    // Mitstreiter-Fenster: zu -> Spielbefehl /companion; offen -> Zusammenfassung
+    // vorlesen. Strg+Umschalt+C steht weder im Keybind-Dump noch sonst im Plugin
+    // (PR 27 / lokale Portierung).
+    public string KeyCompanionWindow = "Strg+Umschalt+C"; // Mitstreiter oeffnen bzw. vorlesen
     public string KeyEmoteNext     = "Umschalt+F5";     // Emote-Browser: nächstes Emote ansagen
     public string KeyEmotePrev     = "Umschalt+F4";     // Emote-Browser: vorheriges Emote ansagen
     public string KeyEmoteDo       = "Umschalt+F6";     // Gewähltes Emote ausführen
@@ -151,6 +155,11 @@ public sealed class Configuration : IPluginConfiguration
     // KeyChatCatPrev/-Next oben schon auf Alt+Bild liegen.
     public string KeyChatTabPrev   = "Alt+Pos1";               // Vorherige Chat-Registerkarte (schaltet das Spiel um)
     public string KeyChatTabNext   = "Alt+Ende";               // Nächste Chat-Registerkarte
+    // [Chat-Absender] Kontextmenü des Absenders der Nachlese-Zeile (Einladen usw.)
+    // und Anvisieren fuer Numpad3. Strg+Umschalt+BildAuf: neben dem Nachlese-Cluster
+    // (Umschalt+Bild = Blaettern, Alt+Bild = Kategorie). Laut Keybind-Dump belegt das
+    // Spiel Strg+Umschalt nur mit Pos1/Ende (CAMERA_RESET), nicht mit BildAuf.
+    public string KeyChatPlayerMenu = "Strg+Umschalt+BildAuf";
     // Benachrichtigungen (V5.9): Einladungen (Freie Gesellschaft, Gruppe,
     // Freundesliste) erscheinen als Popup, das ein Sehender anklickt. Ohne
     // Tastaturweg lief die Einladung fuer den User schlicht ab (Log 2026-07-18
@@ -249,6 +258,7 @@ public sealed class Configuration : IPluginConfiguration
         KeyLevelExp      = defaults.KeyLevelExp;
         KeyRestedStatus  = defaults.KeyRestedStatus;
         KeyChocoboRank   = defaults.KeyChocoboRank;
+        KeyCompanionWindow = defaults.KeyCompanionWindow;
         KeyEmoteNext     = defaults.KeyEmoteNext;
         KeyEmotePrev     = defaults.KeyEmotePrev;
         KeyEmoteDo       = defaults.KeyEmoteDo;
@@ -266,6 +276,7 @@ public sealed class Configuration : IPluginConfiguration
         KeyChatReadNewest = defaults.KeyChatReadNewest; // [Chat-Puffer]
         KeyChatTabPrev   = defaults.KeyChatTabPrev;     // [Chat-Puffer]
         KeyChatTabNext   = defaults.KeyChatTabNext;     // [Chat-Puffer]
+        KeyChatPlayerMenu = defaults.KeyChatPlayerMenu; // [Chat-Absender]
         KeyOptionsMenu   = defaults.KeyOptionsMenu;     // [Einstellungsmenue]
         KeyReadBoard     = defaults.KeyReadBoard;
         KeyReadHand      = defaults.KeyReadHand;
@@ -647,6 +658,8 @@ public sealed class Configuration : IPluginConfiguration
     // GCD-Angriffsskills ausgeschlossen (CooldownService). STANDARD AN.
     public bool AnnounceSkillReady = true;
     public float SkillReadyCueVolume = 0.5f;    // 0 = stumm, 1 = volle Lautstärke
+    /// <summary>Volume for per-resource job-gauge ready tones (0 = mute).</summary>
+    public float GaugeCueVolume = 0.5f;
 
     // Job-Anzeige (User-Wunsch 2026-08-31): sagt an, wenn in der Job-eigenen
     // Leiste etwas WIEDER VERFÜGBAR wird - beim Beschwörer also Ifrit, Titan,

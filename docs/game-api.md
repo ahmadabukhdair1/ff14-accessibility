@@ -224,6 +224,14 @@ Buttons an seinen Listener schicken — derselbe Pfad wie ein echter Mausklick.
 
 - `CharaSelect` ist LEERER Container (Vis=True, 0 Nodes) — Inhalt liegt in
   `_CharaSelectListMenu` (MouseOver param 1/2/3, kein eigener Text-Handler)
+- `_CharaSelectDetail` / `_CharaSelectInfo` (Log 2026-09-14 16:30): beim
+  Listenwechsel ändern sich viele Text-Knoten in ~20 ms. Scanner-Keys
+  (parent×10000+child): `60004` = Job/Stufe („Samurai St. 50“), `70005` =
+  letzter Ort („Mor Dhona“); `_CharaSelectInfo` id=3 = Name. Fokus auf dem
+  Job-Feld sprach „…, Charakterklasse“. **Plugin:** beide Addons in
+  `HudNoiseAddons`; eine Ansage aus List-Nav = Name + Job/Stufe + Ort
+  (`BeginCharaSelectAnnounce` / `TickCharaSelectAnnounce`, wartet bis Info-
+  Name zum Listeneintrag passt).
 - `SelectYesno` wird mit wechselnden Knopf-Texten wiederverwendet (Ok/Abbrechen):
   sichtbare Knöpfe Comp(1005) id=8 (Bestätigen) / id=11 (Abbrechen);
   HoldButton-Duplikate ids 9/12/15 unsichtbar; Window-Komponente (CT=Window(2))
@@ -381,6 +389,8 @@ Zeichen selbst (V4.90). Quelle:
 - **NUMPAD3 frei** (NUMPAD1=HUD-Fokus, NUMPAD5=Kamera, Rest = UI-Cursor)
 - **Strg+F1…F12 komplett frei** (nur Strg+F20 belegt);
   Umschalt+F1…F12 ebenfalls frei (belegt: Umschalt+Tab/T/F/M/V)
+- **Strg+Umschalt+C** frei für Mitstreiter-Fenster (`KeyCompanionWindow`,
+  Port aus PR 27): weder im Keybind-Dump noch sonst im Plugin belegt
 - Einschränkung: bare SHIFT/CONTROL sind im BARDEN-MUSIKMODUS Oktav-Tasten
   (PERFORMANCE_MODE_*) — Strg-Kombis dort vermeiden
 - **WINDOWS-FALLE Umschalt+Nummernblock (entdeckt 2026-07-16):** bei aktivem
@@ -919,6 +929,13 @@ Quelle: `FFXIVClientStructs.FFXIV.Client.Game.UI.Map` (Singleton,
   Quests; `UnacceptedQuestMarkers` (StdList<MarkerInfo>) = annehmbare
   Quests in der Nähe; außerdem u. a. `ActiveLevequestMarker`,
   `GuildLeveAssignmentMarkers`, `TripleTriadMarkers`.
+- **Freischalt-Hinweis annehmbare Quests (PR 28, 2026-09-18):** Quest-Blatt-
+  Felder `InstanceContentUnlock`, `EmoteReward`, `ActionReward`,
+  `GeneralActionReward`, `ClassJobUnlock`, `SystemReward`, `OtherReward`
+  (Reflection, weil Lumina die Typen hier nicht ausschreibt). Name des
+  Inhalts über `ContentFinderCondition.Content` → `Name`. Nur in der Ansage
+  der **annehmbaren** Kategorie; angenommene Quests bleiben ohne Teilsatz.
+  Einmal je Sitzung Log, ob die Felder in dieser Lumina-Fassung existieren.
 - `MarkerInfo` (Size 144): `ObjectiveId`@4 (uint), `Label`@8 (Utf8String,
   Quest-Name), `MarkerData`@112 (StdVector<MapMarkerData> — MEHRERE Orte
   pro Quest möglich!), `RecommendedLevel`@136, `ShouldRender`@139 (bool).
@@ -928,6 +945,17 @@ Quelle: `FFXIVClientStructs.FFXIV.Client.Game.UI.Map` (Singleton,
   `PlaceNameZoneId`@52, `PlaceNameId`@56, `EndTimestamp`@60 (int),
   `RecommendedLevel`@64 (ushort), `TerritoryTypeId`@66 (ushort),
   `DataId`@68 (ushort), `MarkerType`@70, `EventState`@71, `Flags`@72.
+- **Auto-Lauf (2026-09-09):** Bei `Radius > 0` zielt Numpad3 nahe die **Mitte**
+  (nicht Rand). `ResolveReachablePoint` + `stopRange = max(PlaceStop, min(5, Radius))`,
+  weil das Netz die Marker-Mitte oft um wenige Meter verfehlt (gemessen: „Gabe der
+  Unsterblichkeit“ shortfall 3,9 m / Flug „Noch 3 Meter“). Punkt-Marker (`Radius` 0)
+  bleiben eng. Browser-Ansage nennt weiter den Zielkreis (`GoalCircleHint`).
+- **Quest-Auslöser / EventRange (2026-09-10):** `Level.Type` **51** =
+  `QuestMarker` (Karten-Pin, `Object=0`). `Level.Type` **49** = `EventRange`
+  (`EventId` = Quest-RowId, `Object=5000000`) — kleine Walk-in-Volumen, oft
+  ~5 m Radius, wo Gegner/Fortschritt starten. Kategorie **Quest-Objekte** listet
+  diese Auslöser (Sheet-Index + Nähe zum aktuellen Marker-Kreis) zusätzlich zu
+  live EventObjs; Ansage „Auslöser: …“; Numpad3 mit engem Stopp in die Mitte.
 
 ### FALLE: `MapMarkerData.DataId` ist KEINE Objekt-Id (gemessen 2026-08-02)
 Das Feld sieht aus wie die Datensatz-Id des Ziel-Objekts, ist es aber nicht:
@@ -1464,7 +1492,8 @@ aus den Assembly-Metadaten gelesen (kein Raten an Offsets).
   `RemaningSummonTime` (16), `MaxSummonTime` (20),
   `AvailableCombatPoints` (24), `BuddyRank` (32);
   dazu `BuddyStringArray` mit denselben Werten als fertiger Text
-  (`Exp` = „57749/82000").
+  (`Exp` = „57749/82000", `BuddyName`, `CurrentHP`/`MaxHP`,
+  `RemaningSummonTime`/`MaxSummonTime`, `AvailableCombatPoints`).
 - FALLE — das Nummern-Array ist ein GEMALTER WERT, keine Messung. Zwei
   Ausprägungen desselben Problems, beide am 2026-09-04 gemessen:
   1. Es bleibt komplett 0, solange das Chocobo-Fenster in dieser Sitzung nie
@@ -1477,7 +1506,45 @@ aus den Assembly-Metadaten gelesen (kein Raten an Offsets).
   zum Sheet gelesen: das kann nicht veralten, weil es für den Rang fest ist
   und der Rang geprüft wird. Weicht es vom Sheet ab, hat der gemalte Wert
   Vorrang (er ist, was der Spieler sieht) und die Abweichung steht als
-  Warnung im Log. So gebaut in `CombatService.AnnounceChocoboRank`.
+  Warnung im Log. So gebaut in `CombatService.AnnounceChocoboRank` /
+  `ChocoboCompanionReading`.
+
+### Mitstreiter-Fenster (`Buddy` / AddonBuddy) — UI (2026-09-10)
+
+Quelle: Desktop-Dump `FFXIV_UI_Dump.txt` + dalamud.log 10:31; ClientStructs
+`AddonBuddy` (ilspycmd).
+
+- Addon-Name: `Buddy`, Fenstertitel-Knoten „MITSTREITER“. Kind-Addon
+  `BuddyAction` (Kommando-Ring) hängt per `ChildAddonAttached` — **kein**
+  typed `AddonBuddyAction` in ClientStructs; Fokus/Dump für Phase 2.
+- `AddonBuddy`: `TabIndex` @568, `RadioButtons` FixedSizeArray3 @7776,
+  `SetTab(int)`. Reiter-Labels aus Radio-Textkind id=2 (Dump: Kommandos /
+  Kunststücke / Aussehen).
+- Sichtbarer Kopf (Dump): Name (Text id=2 „Hedwig“), Rang + XP-Balken,
+  LP-Komponente, Zeit-Komponente (Countdown — nicht jede Sekunde vorlesen).
+- Plugin-Handler: `OnBuddyUpdate` — SpecialSetup/Update, eine
+  Öffnungszusammenfassung aus `ChocoboCompanionReading` + Array HP/Zeit
+  (Array frisch, solange Fenster offen), Reiterwechsel per TabIndex/Radio.
+  Generischer `ReadAllTexts` würde nacktes „Rang:“ scrapen (STATUS alt).
+- Kind-Addons `BuddySkill` (Kunststücke) und `BuddyAction` (Kommandos):
+  Skill-Icons ohne Text (Log 2026-09-10 ButtonClick node id=6). Namen über
+  `TooltipService.TryGetActionDeep` / Text-Tooltip (`TryReadBuddySkillFocusRow`),
+  Beschreibung per Dwell wie ActionMenu. SpecialSetup/Update, damit der
+  Scanner nicht nur „Kunststücke“ / STUFE-Header scrapt.
+- Taste `KeyCompanionWindow` (Standard `Strg+Umschalt+C`): Fenster zu →
+  Spielbefehl `/companion` (kein Open in IGameGui/ClientStructs; Knopf im
+  Charakterfenster mausonly — PR 27); Fenster offen →
+  `AnnounceCompanionWindow` über denselben Summary-Pfad wie `OnBuddyUpdate`.
+  Kombi steht nicht im Keybind-Dump und nicht sonst im Plugin (Safe-Mod-Key).
+- Follow-up (nicht gebaut): BuddySkill-Öffnungsansage mit Zweig-Stufen.
+  `CompanionInfo.Levels` (3 Bytes @59) ist dokumentiert, aber die Zuordnung
+  Index→Angreifer/Heiler/Verteidiger ist am DE-Client noch nicht belegt;
+  PR-27-Node-IDs stammen aus dem russischen Client und werden nicht
+  übernommen.
+- Auf die Aktionsleiste legbar: `HotbarSlotType.BuddyAction` + BuddyAction-
+  RowId (ClientStructs/Lumina). Belegen-Menü-Quelle „Chocobo-Kommandos“
+  (`HotbarService`, 6.08.15) — gleicher Write-Pfad wie Mount/GeneralAction.
+  In-game-Verify nach Belegen im Log prüfen.
 
 ### Kampf: Gegner-HP, Cast, Hotbar (ilspycmd-verifiziert 2026-07-11)
 - Gegner-/Ziel-Daten über Dalamud `IBattleChara` (erbt `ICharacter`):
@@ -1938,6 +2005,23 @@ einzeln mit `SpeakInterrupt`:
 Jede Ansage schnitt die vorherige ab, hoerbar blieb nur die letzte — der
 Gegenstandsname, bei jedem Tastendruck erneut. Seitdem gesperrt, gleiche Loesung wie
 V5.14 fuer `ItemDetail`: Fenster stumm, Inhalt gesammelt auf Tastendruck.
+
+### Falle: `ActionDetail` gehoert in `HudNoiseAddons` — BESTAETIGT (2026-09-14)
+
+Addon `ActionDetail` ist der Skill-/Trait-Tooltip neben der Kommandoliste
+(`ActionMenu`, Taste K). Log 09:05–09:06: beim Blaettern in Eigenschaften
+sprach `ScanAddonTexts` nacheinander Job-Kuerzel (id=29), `St. N` (id=26),
+Beschreibung (id=19) und Name (id=5) jeweils mit SpeakInterrupt — hoerbar blieb
+nur die letzte Zeile. Gleicher Fehler wie bei `ItemDetail`.
+
+Ab 6.08.16: `ActionDetail` in `HudNoiseAddons`. Lesepfad:
+- Sofort: Tooltip-Action/Trait (`TryGetActionDeep`) → Name+Stufe aus Sheet;
+  sonst Panel-Fallback Name (id=5) + Stufe (id=26), kurz warten bis Panel zum
+  fokussierten Slot passt.
+- Nach 0,4 s Dwell: `ActionTransient` oder Panel-Beschreibung (id=19) per Speak
+  ohne Interrupt.
+- `ActionMenu` hat keine brauchbare Liste — keine „Keine Eintraege“-Ansage.
+
 
 ## Fischen (ilspycmd-verifiziert 2026-07-25, FFXIVClientStructs.dll + Lumina.Excel.dll)
 
@@ -2438,6 +2522,17 @@ verschieden gebaut, eine einheitliche "ist bereit"-Fahne gibt es NICHT:
 - **Echte An/Aus-Fahnen**: SMN (`IsIfritReady` …), PCT (`MooglePortraitReady`,
   `CreatureMotifDrawn` …), BLM (`IsParadoxActive`), DNC (`IsDancing`),
   MCH (`IsOverheated`/`IsRobotActive`)
+
+**SMN/ACN Karfunkel vs Primae (Sheet 2026-08-31, Code 2026-09-18):** Die drei
+Ready-Bits (`IsIfritReady` / `IsTitanReady` / `IsGarudaReady`, AetherFlags
+0x20/0x40/0x80) gelten für Rubin **und** Ifrit bzw. Topas/Titan und
+Smaragd/Garuda — dieselbe Fahne, Aktion upgradet. Ansage-Gatter nutzt die
+Karfunkel-Aktionen (25802 St.6, 25803 St.15, 25804 St.22, ClassJob-26-Erbe),
+damit Hermetiker und SMN unter 30 hören; gesprochen wird „Rubin/Topas/Smaragd
+bereit“, sobald die Primae-Aktion nutzbar ist (25805/25806/25807 St.30/35/45)
+stattdessen „Ifrit/Titan/Garuda bereit“. Job 26 und 27 teilen denselben
+Collect/Announce-Pfad. Zusätzlich Flanke „alle drei bereit“, wenn alle drei
+Bits und alle drei Karfunkel-Stufen erfüllt sind.
 - **Zustaende/Aufzaehlungen**: AST `DrawnCards`, SAM `Sen`, MNK `BeastChakra`/`Nadi`,
   VPR `DreadCombo`, DRK `DeliriumComboStep`, BRD `Coda`
 
@@ -2488,6 +2583,88 @@ Reichweitengruende meldet (dann waere die steigende Flanke Krach statt Auskunft)
 ob `IsActionHighlighted` auch bei voller Anzeige leuchtet, und ob
 `CheckActionResources` mit `actionData = null` sinnvoll antwortet. Dafuer gibt es
 `/acc actionprobe` (`Services/ActionSignalProbe.cs`, nur Debug).
+
+### Samurai-Jobanzeige (SAMGauge → JobGaugeService, 2026-09-09)
+
+Implementiert in `Services/JobGaugeService.CollectSamurai` (ClassJob **34**),
+gleiche Rising-Edge-Regel wie Beschwoerer (User 2026-08-31): nur
+leer/nicht-bereit → bereit/voll, WarningVoice + Skill-Ready-Cue; Ausgeben still.
+On-Demand: bestehende Taste `KeyJobGauge` (Default Strg+Umschalt+F10).
+
+**Quelle:** Dalamud `SAMGauge` (ilspycmd 2026-09-09) ueber
+`FFXIVClientStructs` `SamuraiGauge` — Felder werden gelesen, nicht nachgerechnet.
+
+- **Sen:** `HasGetsu` / `HasKa` / `HasSetsu` (Flags-Enum `Sen`: Setsu=1, Getsu=2,
+  Ka=4). Flanke je Sen + zusaetzlich wenn alle drei aktiv („drei Sen“).
+- **Kenki:** Flanke nur bei `Kenki >= 100` („Kenki voll“). Zwischenstufen
+  absichtlich nicht — On-Demand sagt die aktuelle Zahl.
+- **Meditation:** Flanke bei `MeditationStacks >= 3`, gegated ueber Action
+  **Shoha** id **16487** (Sheet: ClassJob 34, ClassJobLevel 80; v2.xivapi
+  2026-09-09).
+- **Kaeshi / Tsubame:** Enum `Kaeshi` (Dalamud): Higanbana=1, Goken=2,
+  Setsugekka=3, Namikiri=4; 0 = keines. Flanke nur bei Goken/Setsugekka/Namikiri
+  — Higanbana ausgenommen, weil Action **Tsubame-gaeshi** id **16483** laut Sheet
+  Higanbana nicht wiederholen kann. Level-Gatter: ClassJobLevel **74** (Sheet).
+
+Debug: `ActionSignalProbe.LogGauge` loggt SAM mit; in DEBUG loggt
+`JobGaugeService.LogRawSamurai` bei Feldwechsel.
+
+### Alle Job-Anzeigen (JobGaugeService.Jobs.cs, 2026-09-09; Level-Gatter 2026-09-18)
+
+User-Auftrag: jede Dalamud-Jobanzeige hoerbar, damit klar ist „was geht“.
+Umgesetzt fuer alle 22 Gauge-Typen (ClassJobs 19–42 mit Anzeige). Gleiches
+Rising-Edge-Modell; On-Demand `KeyJobGauge` nennt den aktuellen Stand.
+
+**Regel fuer Zaehler:** Flanke bei **Gauge-Kapazitaet** (visuell voll: 100er-Leisten,
+3er-/4er-/5er-Stapel laut Dalamud-Feld), nicht bei Action-`PrimaryCostValue`
+(siehe oben: Kosten nicht nachrechnen). Zusaetzlich bei Stapeln oft
+„bereit“ ab `> 0` (Lilie, Aetherfluss, Patronen, Polyglott, Rasseln, …).
+
+**Fahnen/Zustaende:** DRK Dunkle Kuenste; DRG Leben des Drachen; MCH Ueberhitze/
+Automat; BLM Paradoxon; PCT Motive/Portraets; SGE Eukrasie; AST Karte/Krone;
+MNK Nadi/Tierchakra; BRD Coda; RPR Schleierform; VPR Schlangenschwanz.
+
+**Level-Gatter (2026-09-18):** Jede Flanke und jede On-Demand-Zeile ist an die
+Action-Sheet-Stufe (`ClassJobLevel`) der verknuepften Aktion gebunden — gleiches
+Muster wie SMN-Karfunkel / SAM Shoha. Unter der Stufe: Key droppen (kein false
+speichern), damit Level-up allein keine Ansage ausloest. Stufen werden gelesen,
+nicht hardcodiert; nur die Action-IDs sind Konstanten.
+
+Gate-Zuordnung (erster PrimaryCost-Spender bzw. Unlock der Mode/Fahne):
+
+- WAR beast → 49 Inner Beast; PLD oath → 3542 Sheltron
+- DRK blood → 7392 Bloodspiller; darkarts → 7393 The Blackest Night
+- GNB ammo → 16162 Burst Strike
+- MNK chakra → 25761 Steel Peak; beast.any → 69 Perfect Balance;
+  beast.3 / nadi einzeln → 25764 Masterful Blitz; nadi.both → 25769 Phantom Rush
+- DRG eyes / lotd → 3555 Geirskogul; focus → 25773 Wyrmwind Thrust
+- NIN ninki → 7401 Hellfrog Medium; kazematoi → 3563 Armor Crush
+- SAM getsu/ka/setsu → 7481/7482/7480; threesen → 7487 Midare;
+  kenki → 7490 Hissatsu: Shinten; meditation → 16487 Shoha; kaeshi → 16483 Tsubame
+- RPR soul → 24389 Blood Stalk; shroud/enshroud → 24394 Enshroud;
+  void → 24399 Lemure's Slice
+- VPR coil → 34633 Uncoiled Fury; offerings → 34626 Reawaken; tail → 35920 Serpent's Tail
+- BRD soulvoice → 16496 Apex Arrow; repertoire → 7404 Pitch Perfect;
+  coda → 25785 Radiant Finale
+- MCH heat/overheat → 17209 Hypercharge; battery/robot → 2864 Rook Autoturret
+- DNC feathers → 16007 Fan Dance; esprit → 16005 Saber Dance
+- BLM polyglot → 7422 Foul; paradox → 25797; astralsoul → 36989 Flare Star;
+  hearts → 3576 Blizzard IV
+- RDM white/black → 7527 Enchanted Riposte; stacks → 7525 Verflare
+- PCT palette → 34683; paint → 34662; Motive → 35347/35348/35349;
+  Portraits → 34676/34677
+- WHM lily → 16531 Afflatus Solace; bloodlily → 16535 Afflatus Misery
+- SCH aetherflow → 189 Lustrate (nicht Energy Drain); fairy → 7437 Aetherpact
+- SGE addersgall → 24296 Druochole; addersting → 24304 Toxikon; eukrasia → 24290
+- AST card → 37017 Astral Draw; crown → 37022 Minor Arcana
+- SMN/ACN gems → 25802–25804; aetherflow → 181 Fester (ClassJob 26)
+
+**Nicht angefasst:** reine Timer-Countdown-Ansagen (Lieddauer, Darkside-Rest, …)
+— On-Demand nennt Zahlen/Flags, nicht „gleich abgelaufen“. Marodeur bleibt ohne
+Anzeige (Sheet). Kein `GetActionStatus` / Cooldown-Gatter.
+
+Quellen: Dalamud `JobGauge.Types.*` (ilspycmd 2026-09-09); Gate-IDs v2.xivapi
+Action rows 2026-09-18.
 
 ## Zauberbuch der Blaumagie — AddonAOZNotebook (ilspycmd + Sheet-Dump + UI-Dump, 2026-09-02)
 
@@ -2623,6 +2800,37 @@ Ohne diese Pruefung meldet die Freischaltabfrage bei jedem Nicht-Blaumagier alle
 Bestienbaendiger (ClassJob 43), es ist also kein Erkennungsmerkmal fuer
 Blaumagie. Gemessen 2026-09-02.
 
+## Marktbrett — Gegenstandssuche (`ItemSearch`, Dump+Log 2026-09-15)
+
+Addon-Name: **`ItemSearch`** (Fenstertitel „GEGENSTANDSSUCHE“).
+
+Struktur (Desktop `FFXIV_UI_Dump.txt` 21:41, 149 Nodes):
+- Links: Abschnitte „Waffe/Werkzeug“, „Rüstung/Accessoires“, „Andere“,
+  „Unterkunft“ mit **RadioButtons** (icon-only) und Filter (Stufe, Job-
+  DropDown id=67 `ListLen=44`).
+- Rechts: Ergebnisliste **id=139** `AtkComponentList`, beim Öffnen
+  **`ListLen=0`** — Treffer erst nach Kategoriewahl/Suche.
+- Hinweistext id=140 wenn leer: „Gib den Namen … oder suche nach Kategorie.“
+- Unten: Button „Suche“, Merkliste/Wunschliste.
+
+Verhalten im Log 21:41:
+- Fokus liest Kategorie-/Steuertexte (z. B. „Gladiatoren-Waffe“, „Suche“).
+- Generischer Leer-Listen-Timeout sagte fälschlich „Keine Einträge“ — Fix:
+  `AnnounceLateFilledList` überspringt NoEntries für `ItemSearch`, wartet auf
+  Treffer. Gefüllte Liste: bisheriger ListSummary-/Index-Pfad.
+
+**Enter / Bestätigen (2026-09-15, Log 21:48–49):** Fokus allein füllt
+`ResultsList` nicht. `TryActivateFocusedItemSearch` (Enter):
+1. Click-Event am Kategorie-RadioButton, oder
+2. `FilterLabels` + `AddonItemSearch.SetModeFilter` / `RunSearch`, oder
+3. Suche-Button → `RunSearch`.
+
+ClientStructs: `AddonItemSearch` (`ResultsList`, `SearchButton`, `FilterLabels`,
+`RunSearch`, `SetModeFilter`). Nach Trefferwahl: Addon **`ItemSearchResult`**
+(noch nicht live-gedumpt).
+
+Noch nicht belegt: Preiszeilen-Detail, Kauf, HQ/Menge.
+
 ## Vendor Sell (Gil-Shop) — AccessibleVendorSell (ClientStructs + Community-Pfad, 2026-09-06)
 
 Verkauf an einen normalen NPC-Laden (Addon **`Shop`**, Gil). SpecialShop /
@@ -2672,7 +2880,7 @@ Fact Discipline: keine Behauptung über Timing ohne Log.
 - Ausrüstungsset: `RaptureGearsetModule.IsItemRegisteredToGearset` (gleiche
   Begründung wie Inventar-Set-Marke in FF14Accessibility / STATUS 2026-08-14)
 
-### Vendor Sell Filter (AccessibleVendorSell 1.8, 2026-09-07)
+### Vendor Sell Filter (AccessibleVendorSell 1.10, 2026-09-07)
 - **Verkaufskategorien** (gesprochenes Untermenü): nur eingeschaltete Gruppen.
   Default neu: nur Ausrüstung (Inventar). Gruppen:
   - **Ausrüstung** = Equip-Slot in Inventory1–4
@@ -2687,9 +2895,15 @@ Fact Discipline: keine Behauptung über Timing ohne Log.
   - `ItemUICategory` 33 Angelköder, 85 Saisonaler Gegenstand
   - `IsUnique` / `IsUntradable`
 - SelectYesno gebunden/selten: warten, dann `Close(true)`, skip (1.5).
-- Ausrüstung + Arsenal weiter: Max-Rarity, Max-iLvl, Gearset-Schutz.
-- **Hotkeys:** `Strg+Alt+F9` Vorschau, `F10` verkaufen, `Numpad3` Abbruch,
-  `F12` Einstellungen, `Numpad0` Probe. Kein `Strg+Umschalt+F*` (Accessibility).
+- Ausrüstung + Arsenal weiter: Max-Rarity, Max-iLvl.
+- **Gearset / Duplikate (1.10):** Gruppierung `BaseItemId` + HQ/NQ.
+  - 1× und in Set (`IsItemRegisteredToGearset` oder Id in `GearsetEntry`) → behalten.
+  - 2+ → **1 behalten** (bevorzugt Set-Marke), Rest verkaufen — auch wenn die
+    Id in einem Ausrüstungsset vorkommt (früher blockierten alle Exemplare).
+- **Hotkeys (1.9):** `Alt+F9` Vorschau, `Alt+F10` verkaufen, `Alt+F11` Abbruch,
+  `Alt+F12` Einstellungen, `Alt+F8` Probe. Kein Strg (sonst greift Accessibility
+  `Strg+F9` Aktionsleiste bei Strg+Alt+F9 mit). Kein `Alt+F4` (Windows). Kein
+  `Strg+Umschalt+F*` (Accessibility).
 
 ## Händler-Kategorie (ShopNpcService) — TopicSelect/PreHandler (2026-09-06)
 

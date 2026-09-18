@@ -7,6 +7,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using LuminaAction = Lumina.Excel.Sheets.Action;
 using LuminaActionTransient = Lumina.Excel.Sheets.ActionTransient;
+using LuminaBuddyAction = Lumina.Excel.Sheets.BuddyAction;
 using LuminaEventItem = Lumina.Excel.Sheets.EventItem;
 using LuminaGeneralAction = Lumina.Excel.Sheets.GeneralAction;
 using LuminaMount = Lumina.Excel.Sheets.Mount;
@@ -19,7 +20,8 @@ namespace FF14Accessibility.Services;
 /// target an enemy and press hotbar keys (1-9, 0 = Hotbar 1 slots) to use
 /// actions. Also lets the player REBIND those keys: a modal menu browses the
 /// assignable keys first, and confirming one opens the lists of things that
-/// can go on it (skills, items, quest items, general actions, mounts). The
+/// can go on it (skills, items, quest items, general actions, mounts,
+/// chocobo companion commands). The
 /// write goes through HotbarSlot.Set + WriteSavedSlot (see PlaceOnSlot), so
 /// the change persists like a manual drag-and-drop one.
 /// Structs ilspycmd-verified, see docs/game-api.md -> "Hotbar".
@@ -174,6 +176,14 @@ public sealed class HotbarService
                 return mountName;
         }
 
+        if (type == RaptureHotbarModule.HotbarSlotType.BuddyAction &&
+            _data.GetExcelSheet<LuminaBuddyAction>().TryGetRow(id, out var buddy))
+        {
+            var buddyName = buddy.Name.ExtractText();
+            if (!string.IsNullOrWhiteSpace(buddyName))
+                return buddyName;
+        }
+
         // PopUpHelp is the game's own display text (name plus keybind hint);
         // use it for items, macros, emotes and anything not in the Action sheet.
         var cleaned = CleanUpHelp(popUpHelp);
@@ -226,7 +236,7 @@ public sealed class HotbarService
     /// Numpad 4/6 steps through the sources (user choice 2026-08-06; quest
     /// items, general actions and mounts added 2026-08-09); the chosen key is
     /// the same target for all of them.</summary>
-    private enum AssignSource { Skills, Items, QuestItems, GeneralActions, Mounts }
+    private enum AssignSource { Skills, Items, QuestItems, GeneralActions, Mounts, BuddyActions }
     private AssignSource _menuSource = AssignSource.Skills;
 
     /// <summary>The order Numpad 4/6 steps through, and the order the fallback
@@ -235,7 +245,7 @@ public sealed class HotbarService
     private static readonly AssignSource[] SourceOrder =
     {
         AssignSource.Skills, AssignSource.Items, AssignSource.QuestItems,
-        AssignSource.GeneralActions, AssignSource.Mounts,
+        AssignSource.GeneralActions, AssignSource.Mounts, AssignSource.BuddyActions,
     };
 
     private readonly List<(uint Id, string Name, byte Level)> _skills = new();
@@ -269,6 +279,11 @@ public sealed class HotbarService
     private int _generalActionIndex = -1;
     private readonly List<(uint Id, string Name)> _mounts = new();
     private int _mountIndex = -1;
+    // Companion commands (Heilen, Warten, Folgen, Freie Haltung, unlocked
+    // Kunststücke …): BuddyAction sheet + HotbarSlotType.BuddyAction — same
+    // surface a sighted player gets by dragging from Mitstreiter onto a bar.
+    private readonly List<(uint Id, string Name)> _buddyActions = new();
+    private int _buddyActionIndex = -1;
     // The list is rebuilt when job or level changes (level-ups add skills).
     private byte _skillsJobId;
     private uint _skillsLevel;
@@ -421,6 +436,15 @@ public sealed class HotbarService
                 Say(AccessibilityStrings.MountMenuOpened(_mounts.Count), interrupt);
                 AnnounceMount(interrupt: false);
                 return true;
+
+            case AssignSource.BuddyActions:
+                if (!BuildBuddyActionList()) return false;
+                _menuSource = AssignSource.BuddyActions;
+                if (_buddyActionIndex < 0 || _buddyActionIndex >= _buddyActions.Count)
+                    _buddyActionIndex = 0;
+                Say(AccessibilityStrings.BuddyActionMenuOpened(_buddyActions.Count), interrupt);
+                AnnounceBuddyAction(interrupt: false);
+                return true;
         }
         return false;
     }
@@ -542,6 +566,51 @@ public sealed class HotbarService
     }
 
     /// <summary>
+    /// Rebuilds companion commands and Kunststücke from the BuddyAction sheet —
+    /// Heilen, Warten, Folgen, Haltungen, and unlocked active skills. Slot type
+    /// is <c>HotbarSlotType.BuddyAction</c> (ClientStructs). Unlock via
+    /// <c>UnlockLink</c> like general actions. Sorted by sheet <c>Sort</c> then
+    /// name so the browse order matches Mitstreiter more than A–Z alone.
+    /// </summary>
+    private unsafe bool BuildBuddyActionList()
+    {
+        if (!_clientState.IsLoggedIn) return false;
+
+        var ui = UIState.Instance();
+        if (ui == null) return false;
+
+        _buddyActions.Clear();
+        var withSort = new List<(byte Sort, uint Id, string Name)>();
+        foreach (var row in _data.GetExcelSheet<LuminaBuddyAction>())
+        {
+            if (row.RowId == 0) continue;
+            var name = row.Name.ExtractText();
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var unlock = row.UnlockLink;
+            if (unlock != 0 && !ui->IsUnlockLinkUnlockedOrQuestCompleted(unlock)) continue;
+
+            withSort.Add((row.Sort, row.RowId, name));
+        }
+
+        withSort.Sort((a, b) =>
+        {
+            var bySort = a.Sort.CompareTo(b.Sort);
+            return bySort != 0
+                ? bySort
+                : string.Compare(a.Name, b.Name, StringComparison.CurrentCulture);
+        });
+
+        foreach (var e in withSort)
+            _buddyActions.Add((e.Id, e.Name));
+
+        _buddyActionIndex = _buddyActions.Count > 0 ? 0 : -1;
+        _log.Info($"[Hotbar] Chocobo-Kommandos: {_buddyActions.Count} " +
+                  $"({string.Join(", ", _buddyActions.Take(10).Select(a => $"{a.Name}#{a.Id}"))})");
+        return _buddyActions.Count > 0;
+    }
+
+    /// <summary>
     /// Opens the list of things that can go on the just-chosen key: the source
     /// last used in this session when it still has entries, otherwise the first
     /// one that does. Announcements queue - the caller has just said which key
@@ -651,6 +720,12 @@ public sealed class HotbarService
                 _mountIndex = ((_mountIndex + direction) % _mounts.Count + _mounts.Count) % _mounts.Count;
                 AnnounceMount();
                 break;
+            case SkillMenuStep.PickEntry when _menuSource == AssignSource.BuddyActions:
+                if (_buddyActions.Count == 0) return;
+                _buddyActionIndex = ((_buddyActionIndex + direction) % _buddyActions.Count
+                                     + _buddyActions.Count) % _buddyActions.Count;
+                AnnounceBuddyAction();
+                break;
             case SkillMenuStep.PickEntry when _menuSource == AssignSource.Items:
                 if (_items.Count == 0) return;
                 _itemIndex = ((_itemIndex + direction) % _items.Count + _items.Count) % _items.Count;
@@ -702,6 +777,8 @@ public sealed class HotbarService
                         _chosenBar, _chosenSlot, RaptureHotbarModule.HotbarSlotType.GeneralAction),
                     AssignSource.Mounts     => AssignEntryToSlot(_mounts, _mountIndex,
                         _chosenBar, _chosenSlot, RaptureHotbarModule.HotbarSlotType.Mount),
+                    AssignSource.BuddyActions => AssignEntryToSlot(_buddyActions, _buddyActionIndex,
+                        _chosenBar, _chosenSlot, RaptureHotbarModule.HotbarSlotType.BuddyAction),
                     _                       => AssignSkillToSlot(_skillIndex, _chosenBar, _chosenSlot),
                 };
 
@@ -786,6 +863,15 @@ public sealed class HotbarService
         var location = FindSlotLocationFor(RaptureHotbarModule.HotbarSlotType.Mount, id);
         Say(AccessibilityStrings.PlainBrowseEntry(
             name, location, _mountIndex + 1, _mounts.Count), interrupt);
+    }
+
+    /// <summary>Announces the current companion command / Kunststück.</summary>
+    private void AnnounceBuddyAction(bool interrupt = true)
+    {
+        var (id, name) = _buddyActions[_buddyActionIndex];
+        var location = FindSlotLocationFor(RaptureHotbarModule.HotbarSlotType.BuddyAction, id);
+        Say(AccessibilityStrings.PlainBrowseEntry(
+            name, location, _buddyActionIndex + 1, _buddyActions.Count), interrupt);
     }
 
     /// <summary>Announces the current target key: its label, what is on it now,

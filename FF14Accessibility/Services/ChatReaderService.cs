@@ -156,7 +156,14 @@ public sealed class ChatReaderService : IDisposable
             : string.Empty;
 
         var archived = BuildArchivedText(msg.LogKind, battleLog, archiveName, addressee, senderText, messageText);
-        var partner = ExtractTellPartner(msg);
+        var senderPlayer = ExtractChatPlayer(msg.Sender, verbose: true);
+        var partner = msg.LogKind is XivChatType.TellIncoming or XivChatType.TellOutgoing
+                      && senderPlayer is { World.Length: > 0 }
+            ? senderPlayer
+            : null;
+        if (msg.LogKind is XivChatType.TellIncoming or XivChatType.TellOutgoing
+            && partner == null && msg.Sender != null)
+            _log.Info($"[Chat] Fluester ohne nutzbaren Spieler-Payload: sender='{msg.Sender.TextValue}'");
 
         bool speak;
         // [Chatstimme] Der Kanal, dessen Stimme die Zeile sagt - dort bestimmt, wo
@@ -179,7 +186,8 @@ public sealed class ChatReaderService : IDisposable
             // Chatsystem ist der Filterzustand ohne Bedeutung, und eine Warnung
             // ueber ein System, das der Spieler gar nicht benutzt, waere Laerm.
             if (state == ChatFilterState.Broken && _isActive()) WarnFallbackOnce();
-            _history.Add(_history.EnsureFallbackBuffer(), archived, partner, mirror: false);
+            _history.Add(_history.EnsureFallbackBuffer(), archived, partner, mirror: false,
+                sender: senderPlayer);
             speak = !battleLog && ChatTabSpeech.IsOn(_config, ChatTabSpeech.FallbackIndex, true);
             voiceKey = ChatVoiceKeys.Fallback;
         }
@@ -198,11 +206,11 @@ public sealed class ChatReaderService : IDisposable
             if (_channels.Count == 0)
             {
                 if (coverage == ChatCoverage.SwitchedOff) return;
-                speak = ArchiveUnfilterable(msg.LogKind, archived, partner, battleLog, out voiceKey);
+                speak = ArchiveUnfilterable(msg.LogKind, archived, partner, senderPlayer, battleLog, out voiceKey);
             }
             else
             {
-                speak = ArchiveRouted(archived, partner, out voiceKey);
+                speak = ArchiveRouted(archived, partner, senderPlayer, out voiceKey);
             }
         }
 
@@ -277,7 +285,8 @@ public sealed class ChatReaderService : IDisposable
     /// <param name="voiceKey">[Chatstimme] The channel of the first route that speaks
     /// the line - the same route that decided it is spoken, so the voice belongs to a
     /// channel the player actually hears it through. null when it is not spoken.</param>
-    private bool ArchiveRouted(string archived, TellTarget? partner, out string? voiceKey)
+    private bool ArchiveRouted(string archived, TellTarget? partner, TellTarget? sender,
+        out string? voiceKey)
     {
         voiceKey = null;
 
@@ -292,7 +301,8 @@ public sealed class ChatReaderService : IDisposable
         {
             var channel = _filters.Channel(key);
             if (channel == null) continue;
-            _history.Add(_history.EnsureChannelBuffer(channel), archived, partner, mirror: false);
+            _history.Add(_history.EnsureChannelBuffer(channel), archived, partner, mirror: false,
+                sender: sender);
         }
 
         // AND ONCE MORE INTO EACH SHOWING TAB'S "ALL"
@@ -306,7 +316,8 @@ public sealed class ChatReaderService : IDisposable
         // union of a tab's channels is not the same set as the tab's own lines, and
         // merging by timestamp would need a clock the archive does not keep.
         foreach (var index in _showingTabs)
-            _history.Add(_history.EnsureTabBuffer(index), archived, partner, mirror: false);
+            _history.Add(_history.EnsureTabBuffer(index), archived, partner, mirror: false,
+                sender: sender);
 
         // SPEAK PER ROUTE. The tab's master decides whether
         // the tab says anything at all; under it sits one switch per channel, and
@@ -360,12 +371,14 @@ public sealed class ChatReaderService : IDisposable
     /// other half of a conversation, which takes its counterpart channel's voice when
     /// one is set there. An incoming tell has no switch of its own, and a player who
     /// gave "Flüstern" a voice expects the answers in it too, not only their own lines.</param>
-    private bool ArchiveUnfilterable(XivChatType kind, string archived, TellTarget? partner, bool battleLog,
+    private bool ArchiveUnfilterable(XivChatType kind, string archived, TellTarget? partner,
+                                     TellTarget? sender, bool battleLog,
                                      out string? voiceKey)
     {
         voiceKey = ChatVoiceKeys.Unfiltered;
         foreach (var tab in _filters.Tabs)
-            _history.Add(_history.EnsureTabBuffer(tab.Index), archived, partner, mirror: false);
+            _history.Add(_history.EnsureTabBuffer(tab.Index), archived, partner, mirror: false,
+                sender: sender);
 
         // DIE GEGENRICHTUNG EINER UNTERHALTUNG. Gemessene Lage (Log 2026-08-13
         // 20:58:42 und 20:59:59): ein eingehendes Fluestern kommt als
@@ -389,7 +402,8 @@ public sealed class ChatReaderService : IDisposable
         if (SameConversationAs(kind) is { } counterpart &&
             _filters.ChannelOfKind(counterpart) is { } channel)
         {
-            _history.Add(_history.EnsureChannelBuffer(channel), archived, partner, mirror: false);
+            _history.Add(_history.EnsureChannelBuffer(channel), archived, partner, mirror: false,
+                sender: sender);
             _log.Info($"[Chat] {kind} hat keinen eigenen Schalter - zusaetzlich in den Kanal "
                       + $"'{channel.Name}' von {counterpart} archiviert.");
 
@@ -400,7 +414,8 @@ public sealed class ChatReaderService : IDisposable
         // No tab at all - possible for one frame while the tab list is rebuilding. The
         // line still must not vanish, so it goes where the mod's own notices go.
         if (_filters.Tabs.Count == 0)
-            _history.Add(MessageHistoryService.SystemKey, archived, partner, mirror: false);
+            _history.Add(MessageHistoryService.SystemKey, archived, partner, mirror: false,
+                sender: sender);
 
         // THE BATTLE LOG IS THE ONE EXEMPTION, and it is the same one the degraded path
         // makes for the same reason: several lines a second mid-rotation would bury the
@@ -485,7 +500,11 @@ public sealed class ChatReaderService : IDisposable
 
         var archived = BuildArchivedText(kind, IsBattleLogLine(kind), archiveName, addressee,
                                          senderText, messageText);
-        var partner = ExtractTellPartner(kind, sender, verbose: false);
+        var senderPlayer = ExtractChatPlayer(sender, verbose: false);
+        var partner = kind is XivChatType.TellIncoming or XivChatType.TellOutgoing
+                      && senderPlayer is { World.Length: > 0 }
+            ? senderPlayer
+            : null;
 
         // A stored line the game gives no switch for has no
         // channel and named no tab, so it is recovered into every tab's "all" buffer -
@@ -494,7 +513,8 @@ public sealed class ChatReaderService : IDisposable
         if (_channels.Count == 0)
         {
             foreach (var tab in _filters.Tabs)
-                _history.AddOlder(_history.EnsureTabBuffer(tab.Index), archived, partner);
+                _history.AddOlder(_history.EnsureTabBuffer(tab.Index), archived, partner,
+                    sender: senderPlayer);
             return _filters.Tabs.Count > 0;
         }
 
@@ -502,11 +522,13 @@ public sealed class ChatReaderService : IDisposable
         {
             var channel = _filters.Channel(key);
             if (channel == null) continue;
-            _history.AddOlder(_history.EnsureChannelBuffer(channel), archived, partner);
+            _history.AddOlder(_history.EnsureChannelBuffer(channel), archived, partner,
+                sender: senderPlayer);
         }
 
         foreach (var index in _showingTabs)
-            _history.AddOlder(_history.EnsureTabBuffer(index), archived, partner);
+            _history.AddOlder(_history.EnsureTabBuffer(index), archived, partner,
+                sender: senderPlayer);
 
         return true;
     }
@@ -715,40 +737,27 @@ public sealed class ChatReaderService : IDisposable
     }
 
     /// <summary>
-    /// The other side of a tell (name + home world) from the message's own
-    /// PlayerPayload, or null for any other channel. The payload is the game's
-    /// own data, so no name parsing and no world guessing is involved.
+    /// Player name + home world from a message's <c>PlayerPayload</c>, for any
+    /// channel that carries one. Null when the sender is not a tagged player.
     /// </summary>
-    private TellTarget? ExtractTellPartner(IHandleableChatMessage msg) =>
-        ExtractTellPartner(msg.LogKind, msg.Sender, verbose: true);
-
-    /// <summary>
-    /// The same, from a bare sender string.
-    ///
-    /// Split out so the backfill answers tells the same way the
-    /// live path does - a recovered whisper has to stay answerable, and a second reading
-    /// of the payload list would be a second thing to keep in step.
-    /// </summary>
-    /// <param name="verbose">Whether to log per line. Off for the backfill: one line per
-    /// recovered whisper would bury the pass's own summary in a log the mod rolls on
-    /// every rebuild.</param>
-    private TellTarget? ExtractTellPartner(XivChatType kind, SeString? sender, bool verbose)
+    private TellTarget? ExtractChatPlayer(SeString? sender, bool verbose)
     {
-        if (kind is not (XivChatType.TellIncoming or XivChatType.TellOutgoing)) return null;
         if (sender == null) return null;
 
         foreach (var payload in sender.Payloads)
         {
             if (payload is not PlayerPayload player) continue;
             var world = player.World.ValueNullable?.Name.ExtractText() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(player.PlayerName) || world.Length == 0) continue;
-            if (verbose) _log.Info($"[Chat] Fluester-Partner: '{player.PlayerName}@{world}'");
-            return new TellTarget(player.PlayerName, world);
+            var worldId = (ushort)player.World.RowId;
+            if (string.IsNullOrWhiteSpace(player.PlayerName)) continue;
+            // World may be empty on rare system relays; still keep the name so
+            // ObjectTable search can run. WorldId 0 means "unknown".
+            if (verbose)
+                _log.Info($"[Chat] Spieler-Payload: '{player.PlayerName}" +
+                          (world.Length > 0 ? $"@{world}" : "") + $"' worldId={worldId}");
+            return new TellTarget(player.PlayerName, world, worldId);
         }
 
-        // No payload: happens for lines the game did not tag (e.g. some system
-        // relays). Logged so a missing answer target can be told apart from a bug.
-        if (verbose) _log.Info($"[Chat] Fluester ohne Spieler-Payload: sender='{sender.TextValue}'");
         return null;
     }
 

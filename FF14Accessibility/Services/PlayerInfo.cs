@@ -76,6 +76,16 @@ internal static class PlayerInfo
     }
 
     /// <summary>
+    /// Der Rohwert der Heimatwelt, oder 0 wenn unbekannt. Zum Abgleich mit dem
+    /// WorldId aus dem Chat-<c>PlayerPayload</c>.
+    /// </summary>
+    internal static unsafe ushort HomeWorldId(IGameObject obj)
+    {
+        var chara = AsCharacter(obj);
+        return chara == null ? (ushort)0 : chara->HomeWorld;
+    }
+
+    /// <summary>
     /// Das Charakter-Objekt hinter einem Spieler-Objekt, oder null. Der Cast auf
     /// die Client-Struktur ist derselbe, den UIReaderService fuer die
     /// Charaktererschaffung benutzt; nur Objekte, die das Spiel als Spieler

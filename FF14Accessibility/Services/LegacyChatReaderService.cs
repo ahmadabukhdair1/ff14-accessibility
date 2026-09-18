@@ -103,12 +103,12 @@ public sealed class LegacyChatReaderService : IDisposable
         var archived = string.IsNullOrWhiteSpace(archiveName)
             ? messageText
             : $"{archiveName}{addressee}: {messageText}";
-        // The tell PARTNER travels with the message as a payload, including the
-        // home world. Keeping it is what lets the player answer from the history
-        // later: typing "Name@Welt" by hand needs a world name a blind player has
-        // no way to look up, and a guessed one gets rejected (user 2026-08-02).
-        // Both directions put the other side in Sender, so both are usable.
-        _history.Add(MapCategory(msg.LogKind), archived, ExtractTellPartner(msg));
+        var senderPlayer = ExtractChatPlayer(msg);
+        var partner = msg.LogKind is XivChatType.TellIncoming or XivChatType.TellOutgoing
+                      && senderPlayer is { World.Length: > 0 }
+            ? senderPlayer
+            : null;
+        _history.Add(MapCategory(msg.LogKind), archived, partner, senderPlayer);
 
         // AB HIER NUR NOCH, WENN DIESES SYSTEM DAS GESPROCHENE BESTREITET.
         // Alles darunter hat Nebenwirkungen ausserhalb dieser Klasse (Sprache,
@@ -292,27 +292,25 @@ public sealed class LegacyChatReaderService : IDisposable
     }
 
     /// <summary>
-    /// The other side of a tell (name + home world) from the message's own
-    /// PlayerPayload, or null for any other channel. The payload is the game's
-    /// own data, so no name parsing and no world guessing is involved.
+    /// Player name + home world from a message's <c>PlayerPayload</c>.
     /// </summary>
-    private TellTarget? ExtractTellPartner(IHandleableChatMessage msg)
+    private TellTarget? ExtractChatPlayer(IHandleableChatMessage msg)
     {
-        if (msg.LogKind is not (XivChatType.TellIncoming or XivChatType.TellOutgoing)) return null;
         if (msg.Sender == null) return null;
 
         foreach (var payload in msg.Sender.Payloads)
         {
             if (payload is not PlayerPayload player) continue;
             var world = player.World.ValueNullable?.Name.ExtractText() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(player.PlayerName) || world.Length == 0) continue;
-            _log.Info($"[ChatAlt] Fluester-Partner: '{player.PlayerName}@{world}'");
-            return new TellTarget(player.PlayerName, world);
+            var worldId = (ushort)player.World.RowId;
+            if (string.IsNullOrWhiteSpace(player.PlayerName)) continue;
+            if (world.Length > 0)
+                _log.Info($"[ChatAlt] Spieler-Payload: '{player.PlayerName}@{world}' worldId={worldId}");
+            return new TellTarget(player.PlayerName, world, worldId);
         }
 
-        // No payload: happens for lines the game did not tag (e.g. some system
-        // relays). Logged so a missing answer target can be told apart from a bug.
-        _log.Info($"[ChatAlt] Fluester ohne Spieler-Payload: sender='{msg.Sender.TextValue}'");
+        if (msg.LogKind is XivChatType.TellIncoming or XivChatType.TellOutgoing)
+            _log.Info($"[ChatAlt] Fluester ohne Spieler-Payload: sender='{msg.Sender.TextValue}'");
         return null;
     }
 

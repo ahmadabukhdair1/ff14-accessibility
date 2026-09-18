@@ -191,9 +191,8 @@ public sealed class ActionSignalProbe
         return "(unbekannt)";
     }
 
-    /// <summary>Die Anzeige der beiden Jobs, um die es zuerst geht. Bewusst nur
-    /// diese zwei: die Sonde soll den Testlauf belegen, nicht 22 Jobs
-    /// vorwegnehmen.</summary>
+    /// <summary>Job-Anzeige fuer den aktuellen Job (WAR/SMN/SAM und alle
+    /// weiteren Gauge-Jobs ab 2026-09-09).</summary>
     private void LogGauge(byte job)
     {
         switch (job)
@@ -209,8 +208,91 @@ public sealed class ActionSignalProbe
                               $"Stapel={smn.AetherflowStacks} Ifrit={smn.IsIfritReady} " +
                               $"Titan={smn.IsTitanReady} Garuda={smn.IsGarudaReady}");
                 break;
+            case 34:   // Samurai
+                var sam = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.SAMGauge>();
+                if (sam != null)
+                    _log.Info($"[ActionProbe] SAM Sen=0x{(byte)sam.Sen:X2} " +
+                              $"Getsu={sam.HasGetsu} Ka={sam.HasKa} Setsu={sam.HasSetsu} " +
+                              $"Kenki={sam.Kenki} Meditation={sam.MeditationStacks} " +
+                              $"Kaeshi={sam.Kaeshi}");
+                break;
+            case 19: // PLD
+                var pld = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.PLDGauge>();
+                if (pld != null) _log.Info($"[ActionProbe] PLD Oath={pld.OathGauge}");
+                break;
+            case 32: // DRK
+                var drk = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.DRKGauge>();
+                if (drk != null) _log.Info($"[ActionProbe] DRK Blood={drk.Blood} DarkArts={drk.HasDarkArts}");
+                break;
+            case 37: // GNB
+                var gnb = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.GNBGauge>();
+                if (gnb != null) _log.Info($"[ActionProbe] GNB Ammo={gnb.Ammo}");
+                break;
+            case 20: // MNK
+                var mnk = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.MNKGauge>();
+                if (mnk != null) _log.Info($"[ActionProbe] MNK Chakra={mnk.Chakra} Nadi={mnk.Nadi}");
+                break;
+            case 22: // DRG
+                var drg = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.DRGGauge>();
+                if (drg != null) _log.Info($"[ActionProbe] DRG Eyes={drg.EyeCount} Focus={drg.FirstmindsFocusCount} LOTD={drg.IsLOTDActive}");
+                break;
+            case 30: // NIN
+                var nin = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.NINGauge>();
+                if (nin != null) _log.Info($"[ActionProbe] NIN Ninki={nin.Ninki} Kazematoi={nin.Kazematoi}");
+                break;
+            case 39: // RPR
+                var rpr = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.RPRGauge>();
+                if (rpr != null) _log.Info($"[ActionProbe] RPR Soul={rpr.Soul} Shroud={rpr.Shroud}");
+                break;
+            case 41: // VPR
+                var vpr = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.VPRGauge>();
+                if (vpr != null) _log.Info($"[ActionProbe] VPR Coil={vpr.RattlingCoilStacks} Offerings={vpr.SerpentOffering} Tail={vpr.SerpentCombo}");
+                break;
+            case 23: // BRD
+                var brd = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.BRDGauge>();
+                if (brd != null) _log.Info($"[ActionProbe] BRD SoulVoice={brd.SoulVoice} Repertoire={brd.Repertoire}");
+                break;
+            case 31: // MCH
+                var mch = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.MCHGauge>();
+                if (mch != null) _log.Info($"[ActionProbe] MCH Heat={mch.Heat} Battery={mch.Battery} OH={mch.IsOverheated} Robot={mch.IsRobotActive}");
+                break;
+            case 38: // DNC
+                var dnc = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.DNCGauge>();
+                if (dnc != null) _log.Info($"[ActionProbe] DNC Feathers={dnc.Feathers} Esprit={dnc.Esprit}");
+                break;
+            case 25: // BLM
+                var blm = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.BLMGauge>();
+                if (blm != null) _log.Info($"[ActionProbe] BLM Polyglot={blm.PolyglotStacks} Paradox={blm.IsParadoxActive}");
+                break;
+            case 35: // RDM
+                var rdm = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.RDMGauge>();
+                if (rdm != null) _log.Info($"[ActionProbe] RDM W={rdm.WhiteMana} B={rdm.BlackMana} Stacks={rdm.ManaStacks}");
+                break;
+            case 42: // PCT
+                var pct = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.PCTGauge>();
+                if (pct != null) _log.Info($"[ActionProbe] PCT Palette={pct.PalleteGauge} Paint={pct.Paint} Moogle={pct.MooglePortraitReady} Madeen={pct.MadeenPortraitReady}");
+                break;
+            case 24: // WHM
+                var whm = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.WHMGauge>();
+                if (whm != null) _log.Info($"[ActionProbe] WHM Lily={whm.Lily} BloodLily={whm.BloodLily}");
+                break;
+            case 28: // SCH
+                var sch = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.SCHGauge>();
+                if (sch != null) _log.Info($"[ActionProbe] SCH Aetherflow={sch.Aetherflow} Fairy={sch.FairyGauge}");
+                break;
+            case 40: // SGE
+                var sge = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.SGEGauge>();
+                if (sge != null) _log.Info($"[ActionProbe] SGE Addersgall={sge.Addersgall} Addersting={sge.Addersting} Eukrasia={sge.Eukrasia}");
+                break;
+            case 33: // AST
+                var ast = _gauges.Get<Dalamud.Game.ClientState.JobGauge.Types.ASTGauge>();
+                if (ast != null) _log.Info($"[ActionProbe] AST Cards={string.Join('/', ast.DrawnCards)} Crown={ast.DrawnCrownCard}");
+                break;
             case 3:    // Marodeur - hat nachweislich keine Anzeige (Sheet 2026-09-01)
                 _log.Info("[ActionProbe] Marodeur: keine Job-Anzeige (keine Aktion mit Anzeige-Kosten).");
+                break;
+            default:
+                _log.Info($"[ActionProbe] Job {job}: keine spezielle Gauge-Probe (Collect laeuft ueber JobGaugeService).");
                 break;
         }
     }

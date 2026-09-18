@@ -56,6 +56,8 @@ public sealed class OptionsMenu
     private readonly WarningVoiceService _warnVoice;
     // [Chatstimme] Stimmenliste und Probe fuer die Kanalzeilen.
     private readonly ChatVoiceService _chatVoice;
+    // [Job-Anzeige-Toene] Nur zum Nachhoeren der Ressourcen-Toene.
+    private readonly CueService _cue;
     // [Reihenfolge] Die drei Listen, die der Spieler sortieren darf, kommen von
     // ihren eigenen Diensten - das Menue fuehrt keine eigene Kopie. Eine zweite
     // Liste derselben Kategorien waere genau die Abweichung, die niemand bemerkt,
@@ -81,7 +83,7 @@ public sealed class OptionsMenu
     public OptionsMenu(Configuration config, Action save, TolkService tolk, IPluginLog log,
                        HeadingService heading, GameChatFilters chatFilters,
                        AoeWarningService aoeWarning, WarningVoiceService warnVoice,
-                       ChatVoiceService chatVoice,
+                       ChatVoiceService chatVoice, CueService cue,
                        NavigationService nav, LegacyChatHistoryService legacyHistory,
                        MessageHistoryService history,
                        DungeonRouteService dungeonRoute, Action fetchDungeonPaths,
@@ -101,6 +103,7 @@ public sealed class OptionsMenu
         _aoeWarning = aoeWarning;
         _warnVoice  = warnVoice;
         _chatVoice  = chatVoice;
+        _cue = cue;
         _nav = nav;
         _legacyHistory = legacyHistory;
         _history = history;
@@ -1232,6 +1235,8 @@ public sealed class OptionsMenu
             // liefen ab V5.28 monatelang ohne jede Schaltung mit (Notiz darunter),
             // und genau das soll sich nicht wiederholen.
             Toggle(AccessibilityStrings.OptJobGauge,         () => _config.AnnounceJobGauge,    v => _config.AnnounceJobGauge = v),
+            Volume(AccessibilityStrings.OptGaugeCueVolume,   () => _config.GaugeCueVolume,      v => _config.GaugeCueVolume = v),
+            GaugeCuePreview(),
 
             // HP\MP-TOENE: NACHGETRAGEN 2026-08-23. Sie liefen seit V5.28 ohne
             // jede Schaltung im Menue - und sie sind lauter zu hoeren, als es
@@ -1269,6 +1274,66 @@ public sealed class OptionsMenu
             WarningVoiceChoice(),
         },
     };
+
+    /// <summary>
+    /// Untermenü nach Job: erst den Job wählen, dann die Ressourcen-Töne
+    /// dieses Jobs anspielen. StayOpen + nur Ton (kein Name darüber), gleiches
+    /// Muster wie die Flächenwarnungs-Klänge.
+    /// </summary>
+    private MenuEntry GaugeCuePreview() => new()
+    {
+        Label   = AccessibilityStrings.OptGaugeCuePreview,
+        Submenu = BuildGaugeCuePreview,
+    };
+
+    private MenuLevel BuildGaugeCuePreview()
+    {
+        var level = new MenuLevel
+        {
+            Title   = AccessibilityStrings.OptGaugeCuePreview,
+            Rebuild = BuildGaugeCuePreview,
+        };
+
+        foreach (var (jobName, cues) in GaugeReadyCues.ByJob())
+        {
+            var job = jobName;
+            var jobCues = cues;
+            level.Entries.Add(new MenuEntry
+            {
+                Label   = job,
+                Submenu = () => BuildGaugeCuePreviewJob(job, jobCues),
+            });
+        }
+
+        return level;
+    }
+
+    private MenuLevel BuildGaugeCuePreviewJob(string jobName, GaugeReadyCueId[] cues)
+    {
+        var level = new MenuLevel
+        {
+            Title = jobName,
+            Rebuild = () => BuildGaugeCuePreviewJob(jobName, cues),
+        };
+
+        foreach (var cue in cues)
+        {
+            var choice = cue;
+            level.Entries.Add(new MenuEntry
+            {
+                Label    = GaugeReadyCues.Name(choice),
+                StayOpen = true,
+                Activate = () =>
+                {
+                    if (!_cue.PlayGaugeReadyPreview(choice))
+                        _tolk.SpeakInterrupt(GaugeReadyCues.Name(choice));
+                    _log.Info($"[Einstellungen] Job-Anzeige Ton Probe -> {jobName}/{choice}");
+                },
+            });
+        }
+
+        return level;
+    }
 
     /// <summary>
     /// Das Tempo der Warnstimme. SAPI rechnet in Stufen von -10 bis 10; im Menue

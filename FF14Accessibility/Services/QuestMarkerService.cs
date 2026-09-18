@@ -5,6 +5,11 @@ using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
+using LuminaAction = Lumina.Excel.Sheets.Action;
+using LuminaClassJob = Lumina.Excel.Sheets.ClassJob;
+using LuminaContentFinderCondition = Lumina.Excel.Sheets.ContentFinderCondition;
+using LuminaEmote = Lumina.Excel.Sheets.Emote;
+using LuminaGeneralAction = Lumina.Excel.Sheets.GeneralAction;
 using LuminaLevel = Lumina.Excel.Sheets.Level;
 using LuminaQuest = Lumina.Excel.Sheets.Quest;
 
@@ -27,6 +32,12 @@ public enum QuestMarkerRole
     /// <summary>A live enemy of the RUNNING levequest. Unlike the two above this
     /// is a real world object, not a map marker - see LevequestEnemyService.</summary>
     LeveEnemy,
+    /// <summary>An invisible walk-in volume (<c>Level.Type</c> 49 EventRange)
+    /// tied to an accepted quest. Map markers (Type 51) only name a search
+    /// circle; enemies/progress often start only after entering one of these
+    /// smaller ranges (measured 2026-09-09/10, MSQ „Die Gabe der
+    /// Unsterblichkeit“). Listed under Quest objects — not live GameObjects.</summary>
+    QuestTrigger,
 }
 
 /// <summary>
@@ -85,6 +96,9 @@ public enum QuestKind
 /// (8 = ENpcBase, 9 = BNpcBase, 45 = EObj), 0 when unknown. The BaseId alone
 /// would be ambiguous - ENpcBase and BNpcBase are separate sheets with
 /// overlapping row ids.</param>
+/// <param name="Unlock">Was die Quest laut Quest-Blatt freischaltet, als Teilsatz
+/// ("schaltet das Dungeon 'X' frei") - leer, wenn das Blatt nichts hergibt.
+/// Gebraucht bei den NOCH NICHT angenommenen Quests.</param>
 public sealed record QuestDestination(
     string QuestName,
     string Detail,
@@ -97,7 +111,8 @@ public sealed record QuestDestination(
     int Level,
     QuestMarkerRole Role = QuestMarkerRole.Quest,
     uint TargetBaseId = 0,
-    byte TargetLevelType = 0);
+    byte TargetLevelType = 0,
+    string Unlock = "");
 
 /// <summary>
 /// Reads the objective markers of ACCEPTED quests from the game's map
@@ -106,6 +121,16 @@ public sealed record QuestDestination(
 /// </summary>
 public sealed class QuestMarkerService
 {
+    /// <summary>Lumina <c>Level.Type</c> / ClientStructs <c>InstanceType.EventRange</c>.
+    /// Sheet dump: Type 49 rows carry <c>Object</c> 5000000 and an <c>EventId</c>
+    /// pointing at the Quest row — the walk-in volumes inside a map goal circle.</summary>
+    private const byte LevelTypeEventRange = 49;
+
+    /// <summary>Extra metres beyond a map marker's Radius when deciding whether
+    /// an EventRange belongs to the current objective pin. Marker centres and
+    /// range centres do not coincide (Gabe: ~15–18 m offset inside r=35).</summary>
+    private const float EventRangeMarkerSlack = 15f;
+
     private readonly IClientState _clientState;
     private readonly IDataManager _data;
     private readonly IPluginLog _log;
@@ -118,6 +143,12 @@ public sealed class QuestMarkerService
     }
 
     private Dictionary<string, QuestKind>? _questKinds;
+    private Dictionary<string, uint>? _questIds;
+    private Dictionary<uint, List<EventRangeRow>>? _eventRangesByQuestId;
+
+    /// <summary>One Level Type-49 row, cached once from the sheet.</summary>
+    private readonly record struct EventRangeRow(
+        uint LevelId, Vector3 Position, float Radius, ushort Territory, uint MapId);
 
     /// <summary>
     /// Quest name -> kind, built once from the Quest sheet by walking the game's
@@ -209,6 +240,159 @@ public sealed class QuestMarkerService
         _questLevels = levels;
         _log.Info($"[Quest] Quest-Stufen aus dem Sheet geladen: {levels.Count}");
         return levels;
+    }
+
+    /// <summary>
+    /// Quest name → sheet RowId, built once. Same JournalGenre filter as
+    /// <see cref="QuestKinds"/> so duplicate names without a genre cannot steal
+    /// the id of a real journal quest. First matching row wins (same caveat as
+    /// levels: reused names are imperfect).
+    /// </summary>
+    private Dictionary<string, uint> QuestIds()
+    {
+        if (_questIds != null) return _questIds;
+
+        var ids = new Dictionary<string, uint>();
+        foreach (var quest in _data.GetExcelSheet<LuminaQuest>())
+        {
+            var name = quest.Name.ExtractText();
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            if (quest.JournalGenre.RowId == 0) continue;
+            ids.TryAdd(name, quest.RowId);
+        }
+
+        _questIds = ids;
+        _log.Info($"[Quest] Quest-Ids aus dem Sheet geladen: {ids.Count}");
+        return ids;
+    }
+
+    /// <summary>
+    /// All Level Type-49 (EventRange) rows keyed by Quest RowId (<c>EventId</c>).
+    /// Built once — the sheet is ~60k rows; browsing must not rescan it.
+    /// </summary>
+    private Dictionary<uint, List<EventRangeRow>> EventRangesByQuestId()
+    {
+        if (_eventRangesByQuestId != null) return _eventRangesByQuestId;
+
+        var byQuest = new Dictionary<uint, List<EventRangeRow>>();
+        var total = 0;
+        foreach (var level in _data.GetExcelSheet<LuminaLevel>())
+        {
+            if (level.Type != LevelTypeEventRange) continue;
+            var questId = level.EventId.RowId;
+            if (questId == 0) continue;
+
+            var row = new EventRangeRow(
+                level.RowId,
+                new Vector3(level.X, level.Y, level.Z),
+                level.Radius,
+                (ushort)level.Territory.RowId,
+                level.Map.RowId);
+
+            if (!byQuest.TryGetValue(questId, out var list))
+                byQuest[questId] = list = new List<EventRangeRow>();
+            list.Add(row);
+            total++;
+        }
+
+        _eventRangesByQuestId = byQuest;
+        _log.Info($"[Quest] EventRange-Index: {total} Auslöser für {byQuest.Count} Quests.");
+        return byQuest;
+    }
+
+    /// <summary>
+    /// Walk-in EventRange volumes for ACCEPTED quests in the current territory.
+    ///
+    /// Map markers (Type 51) only give a search circle; spawn/progress often
+    /// needs entering a Type-49 volume linked by <c>Level.EventId</c> = Quest
+    /// RowId (sheet + zone-probe 2026-09-10). Ranges are kept when they sit
+    /// near an in-zone marker of that quest (marker Radius + slack), so later
+    /// steps of the same quest do not flood the list. Listed under the Quest
+    /// objects browser — these are not ObjectTable entries.
+    /// </summary>
+    public unsafe List<QuestDestination> GetEventRangeDestinations()
+    {
+        var result = new List<QuestDestination>();
+        var map = Map.Instance();
+        if (map == null) return result;
+
+        var currentTerritory = _clientState.TerritoryType;
+        var questIds = QuestIds();
+        var rangesByQuest = EventRangesByQuestId();
+        var kinds = QuestKinds();
+        var levels = QuestLevels();
+        var seenLevel = new HashSet<uint>();
+        var trace = new List<string>();
+
+        foreach (ref var marker in map->QuestMarkers)
+        {
+            var questName = marker.Label.ToString();
+            if (string.IsNullOrWhiteSpace(questName)) continue;
+            if (!questIds.TryGetValue(questName, out var questId)) continue;
+            if (!rangesByQuest.TryGetValue(questId, out var ranges)) continue;
+
+            var circles = new List<(Vector3 Centre, float Radius)>();
+            var locations = marker.MarkerData.Count;
+            if (locations is < 0 or > 100) continue;
+            for (var i = 0; i < locations; i++)
+            {
+                var data = marker.MarkerData[i];
+                if (data.TerritoryTypeId != currentTerritory) continue;
+                circles.Add((data.Position, data.Radius));
+            }
+            if (circles.Count == 0) continue;
+
+            var kind = kinds.GetValueOrDefault(questName, QuestKind.Unknown);
+            var sheetLevel = levels.GetValueOrDefault(questName, 0);
+
+            foreach (var range in ranges)
+            {
+                if (range.Territory != currentTerritory) continue;
+                if (!seenLevel.Add(range.LevelId)) continue;
+
+                var near = false;
+                foreach (var (centre, radius) in circles)
+                {
+                    var limit = MathF.Max(radius, 1f) + EventRangeMarkerSlack;
+                    var dx = range.Position.X - centre.X;
+                    var dz = range.Position.Z - centre.Z;
+                    if (MathF.Sqrt(dx * dx + dz * dz) <= limit)
+                    {
+                        near = true;
+                        break;
+                    }
+                }
+                if (!near) continue;
+
+                var markerLevel = 0;
+                for (var i = 0; i < locations; i++)
+                {
+                    var data = marker.MarkerData[i];
+                    if (data.TerritoryTypeId != currentTerritory) continue;
+                    if (data.RecommendedLevel > 0) { markerLevel = data.RecommendedLevel; break; }
+                }
+                var level = markerLevel > 0 ? markerLevel : sheetLevel;
+
+                result.Add(new QuestDestination(
+                    questName,
+                    string.Empty,
+                    range.Position,
+                    range.Radius,
+                    range.Territory,
+                    range.MapId,
+                    InCurrentZone: true,
+                    kind,
+                    level,
+                    QuestMarkerRole.QuestTrigger));
+
+                trace.Add($"'{questName}' LevelId={range.LevelId} " +
+                          $"pos=({range.Position.X:F0}|{range.Position.Z:F0}) r={range.Radius:F1}");
+            }
+        }
+
+        _log.Info($"[Quest] EventRange-Auslöser in Zone ({result.Count}): " +
+                  (trace.Count > 0 ? string.Join(" | ", trace) : "keine"));
+        return result;
     }
 
     /// <summary>
@@ -440,6 +624,193 @@ public sealed class QuestMarkerService
         }
     }
 
+    private Dictionary<string, List<LuminaQuest>>? _questsByName;
+    private Dictionary<uint, string>? _dutyNames;
+    private bool _unlockFieldsChecked;
+
+    /// <summary>
+    /// Name des Inhalts hinter einer InstanceContent-Id. Der Weg ist der der
+    /// Inhaltssuche: die Zeile <c>InstanceContent</c> selbst traegt KEINEN Namen
+    /// (gemessen 2026-09-15 - der Uebersetzungsversuch brach mit CS1061 ab),
+    /// benannt wird sie von <c>ContentFinderCondition.Content</c>. Erster Treffer
+    /// gewinnt: mehrere Zeilen teilen sich einen Inhalt.
+    /// </summary>
+    private string DutyName(uint contentId)
+    {
+        if (_dutyNames == null)
+        {
+            var map = new Dictionary<uint, string>();
+            foreach (var row in _data.GetExcelSheet<LuminaContentFinderCondition>())
+            {
+                var id = row.Content.RowId;
+                if (id == 0) continue;
+                var name = row.Name.ToString();
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                if (!map.ContainsKey(id)) map[id] = name;
+            }
+            _dutyNames = map;
+            _log.Info($"[Quest] Inhalts-Namen fuer Freischaltungen geladen: {map.Count}");
+        }
+
+        return _dutyNames.GetValueOrDefault(contentId, string.Empty);
+    }
+
+    /// <summary>
+    /// Was eine Quest laut Quest-Blatt freischaltet, als Teilsatz - leer, wenn
+    /// das Blatt nichts hergibt. Quelle: InstanceContentUnlock, ActionReward,
+    /// GeneralActionReward, EmoteReward, ClassJobUnlock, SystemReward, OtherReward
+    /// (PR 28 / gemessen 2026-09-15).
+    /// </summary>
+    private string UnlockHint(string label)
+    {
+        foreach (var quest in QuestRows(label))
+        {
+            var hint = UnlockHint(quest);
+            if (hint.Length > 0) return hint;
+        }
+        return string.Empty;
+    }
+
+    private string UnlockHint(LuminaQuest quest)
+    {
+        CheckUnlockFields();
+
+        var dungeon = FieldId(quest, "InstanceContentUnlock");
+        if (dungeon != 0)
+            return AccessibilityStrings.QuestUnlocksDungeon(DutyName(dungeon));
+
+        var emote = FieldId(quest, "EmoteReward");
+        if (emote != 0)
+        {
+            var name = _data.GetExcelSheet<LuminaEmote>().TryGetRow(emote, out var row)
+                ? row.Name.ExtractText()
+                : string.Empty;
+            return AccessibilityStrings.QuestUnlocksEmote(name);
+        }
+
+        var action = FieldId(quest, "ActionReward");
+        if (action != 0)
+        {
+            var name = _data.GetExcelSheet<LuminaAction>().TryGetRow(action, out var row)
+                ? row.Name.ExtractText()
+                : string.Empty;
+            return AccessibilityStrings.QuestUnlocksAction(name);
+        }
+
+        var general = FieldId(quest, "GeneralActionReward");
+        if (general != 0)
+        {
+            var name = _data.GetExcelSheet<LuminaGeneralAction>().TryGetRow(general, out var row)
+                ? row.Name.ExtractText()
+                : string.Empty;
+            return AccessibilityStrings.QuestUnlocksAction(name);
+        }
+
+        var classJob = FieldId(quest, "ClassJobUnlock");
+        if (classJob != 0)
+        {
+            var name = _data.GetExcelSheet<LuminaClassJob>().TryGetRow(classJob, out var row)
+                ? row.Name.ExtractText()
+                : string.Empty;
+            return AccessibilityStrings.QuestUnlocksClassJob(name);
+        }
+
+        if (FieldId(quest, "SystemReward") != 0 || FieldId(quest, "OtherReward") != 0)
+            return AccessibilityStrings.QuestUnlocksSomething;
+
+        return string.Empty;
+    }
+
+    /// <summary>Quest-Zeilen des Blattes zu einem Markierungs-Label.</summary>
+    private List<LuminaQuest> QuestRows(string label)
+    {
+        if (_questsByName == null)
+        {
+            var map = new Dictionary<string, List<LuminaQuest>>(System.StringComparer.OrdinalIgnoreCase);
+            foreach (var quest in _data.GetExcelSheet<LuminaQuest>())
+            {
+                var name = quest.Name.ExtractText();
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                if (quest.JournalGenre.RowId == 0) continue; // "Ungueltige Kategorie"
+                if (!map.TryGetValue(name, out var list)) map[name] = list = new List<LuminaQuest>();
+                list.Add(quest);
+            }
+            _questsByName = map;
+            _log.Info($"[Quest] Quest-Zeilen nach Namen: {map.Count}");
+        }
+
+        return _questsByName.GetValueOrDefault(label, new List<LuminaQuest>());
+    }
+
+    /// <summary>Einmal je Sitzung: ob die Freischalt-Felder in dieser Lumina-Fassung existieren.</summary>
+    private void CheckUnlockFields()
+    {
+        if (_unlockFieldsChecked) return;
+        _unlockFieldsChecked = true;
+
+        var missing = UnlockFields
+            .Where(f => typeof(LuminaQuest).GetProperty(f) == null)
+            .ToList();
+        _log.Info(missing.Count == 0
+            ? $"[Quest] Freischalt-Felder vorhanden: {string.Join(", ", UnlockFields)}"
+            : $"[Quest] Freischalt-Felder FEHLEN in dieser Lumina-Fassung: {string.Join(", ", missing)}");
+    }
+
+    private static readonly string[] UnlockFields =
+    {
+        "InstanceContentUnlock", "EmoteReward", "ActionReward", "GeneralActionReward",
+        "ClassJobUnlock", "SystemReward", "OtherReward",
+    };
+
+    /// <summary>
+    /// Rohwert eines Blattfeldes per Reflection (Lumina schreibt die Typen hier
+    /// nicht aus). Zahlen direkt, Zeilenreferenzen ueber RowId, Collections ueber
+    /// das erste Element ungleich Null.
+    /// </summary>
+    private static uint FieldId(LuminaQuest quest, string field)
+    {
+        object? value;
+        try // external call: Lumina row property
+        {
+            value = typeof(LuminaQuest).GetProperty(field)?.GetValue(quest);
+        }
+        catch (System.Exception)
+        {
+            return 0;
+        }
+
+        if (value is System.Collections.IEnumerable items and not string)
+        {
+            foreach (var item in items)
+            {
+                var element = ScalarId(item);
+                if (element != 0) return element;
+            }
+            return 0;
+        }
+        return ScalarId(value);
+    }
+
+    private static uint ScalarId(object? value)
+    {
+        switch (value)
+        {
+            case uint u: return u;
+            case ushort us: return us;
+            case byte b: return b;
+            case null: return 0;
+        }
+
+        var rowId = value.GetType().GetProperty("RowId");
+        return rowId?.GetValue(value) switch
+        {
+            uint r => r,
+            ushort r => r,
+            byte r => r,
+            _ => 0,
+        };
+    }
+
     private unsafe void AddMarkerDestinations(
         List<QuestDestination> result, MarkerInfo marker, uint currentTerritory, string tag,
         QuestMarkerRole role = QuestMarkerRole.Quest)
@@ -452,6 +823,10 @@ public sealed class QuestMarkerService
         // when the game leaves RecommendedLevel at 0 (runtime behaviour unknown,
         // hence both values in the log below).
         var sheetLevel = QuestLevels().GetValueOrDefault(questName, 0);
+
+        // Was die Quest freischaltet - nur fuer normale Quest-Marker (nicht Leve):
+        // bei angenommenen Quests wird der Teilsatz in der Ansage weggelassen.
+        var unlock = role == QuestMarkerRole.Quest ? UnlockHint(questName) : string.Empty;
 
         var locations = marker.MarkerData.Count;
         if (locations is < 0 or > 100)
@@ -466,7 +841,7 @@ public sealed class QuestMarkerService
             var data = marker.MarkerData[i];
             var tooltip = data.TooltipString != null ? data.TooltipString->ToString() : string.Empty;
             var inZone = data.TerritoryTypeId == currentTerritory;
-            _log.Info($"[{tag}] Marker '{questName}' [{i + 1}/{locations}]: tt='{tooltip}' " +
+            _log.Info($"[{tag}] Marker '{questName}' [{i + 1}/{locations}]: tt='{tooltip}' unlock='{unlock}' " +
                       $"pos=({data.Position.X:F1}|{data.Position.Y:F1}|{data.Position.Z:F1}) " +
                       $"r={data.Radius:F1} terr={data.TerritoryTypeId} (aktuell={currentTerritory}) " +
                       $"map={data.MapId} icon={data.IconId} render={marker.ShouldRender} " +
@@ -494,7 +869,7 @@ public sealed class QuestMarkerService
 
             result.Add(new QuestDestination(questName, tooltip, data.Position,
                 data.Radius, data.TerritoryTypeId, data.MapId, inZone, kind, level, role,
-                targetBaseId, targetType));
+                targetBaseId, targetType, unlock));
         }
     }
 }

@@ -304,6 +304,8 @@ public static partial class AccessibilityStrings
     public static string OptSkillReady => IsGerman ? "Fähigkeit bereit" : "Ability ready";
     public static string OptSkillReadyVolume => IsGerman ? "Fähigkeit bereit Lautstärke" : "Ability ready volume";
     public static string OptJobGauge => IsGerman ? "Job-Anzeige wieder verfügbar" : "Job gauge back up";
+    public static string OptGaugeCueVolume => IsGerman ? "Job-Anzeige Ton Lautstärke" : "Job gauge tone volume";
+    public static string OptGaugeCuePreview => IsGerman ? "Job-Anzeige Töne nachhören" : "Preview job gauge tones";
     public static string OptHeading => IsGerman ? "Himmelsrichtung" : "Compass heading";
     public static string OptTargetChanges => IsGerman ? "Zielwechsel" : "Target changes";
     public static string OptTargetHp => IsGerman ? "Ziel-Lebenspunkte" : "Target health";

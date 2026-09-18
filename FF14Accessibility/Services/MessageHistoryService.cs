@@ -9,10 +9,15 @@ namespace FF14Accessibility.Services;
 /// type "Name@Welt" - a blind player cannot look that world up anywhere, and
 /// guessing it gets the command rejected (user 2026-08-02).
 /// </summary>
-public sealed record TellTarget(string Name, string World)
+public sealed record TellTarget(string Name, string World, ushort WorldId = 0)
 {
     /// <summary>The form the game's chat commands expect: "Vorname Nachname@Welt".</summary>
-    public string CommandTarget => $"{Name}@{World}";
+    public string CommandTarget =>
+        World.Length > 0 ? $"{Name}@{World}" : Name;
+
+    /// <summary>Spoken / logged form: with world when the payload carried one.</summary>
+    public string DisplayName =>
+        World.Length > 0 ? $"{Name}@{World}" : Name;
 }
 
 /// <summary>
@@ -151,9 +156,16 @@ public sealed class MessageHistoryService
     /// </summary>
     public Func<string, bool>? BufferOffered { get; set; }
 
-    /// <summary>One archived line: the spoken text plus, for tells, who it was
-    /// with (null for every other channel).</summary>
-    private sealed record Entry(string Text, TellTarget? Partner);
+    /// <summary>
+    /// One archived line.
+    /// <list type="bullet">
+    /// <item><see cref="Partner"/> — tell partner only (answer path).</item>
+    /// <item><see cref="Sender"/> — any chat line whose sender carried a
+    /// <c>PlayerPayload</c> (Say/Party/FC/… and tells). Used to open that
+    /// player's context menu / target them for Numpad3.</item>
+    /// </list>
+    /// </summary>
+    private sealed record Entry(string Text, TellTarget? Partner, TellTarget? Sender);
 
     /// <summary>
     /// One browsable buffer. The name is a FUNCTION, for two independent reasons:
@@ -390,7 +402,8 @@ public sealed class MessageHistoryService
     /// <param name="mirror">Whether the line also goes to the old history via
     /// <see cref="Mirror"/>. False for the chat reader, which has its own path
     /// there - see the property.</param>
-    public void Add(string key, string text, TellTarget? partner = null, bool mirror = true)
+    public void Add(string key, string text, TellTarget? partner = null, bool mirror = true,
+        TellTarget? sender = null)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
 
@@ -400,7 +413,7 @@ public sealed class MessageHistoryService
 
         // Nothing is dropped, so the cursor never has to be pulled along: an
         // entry keeps its index for the whole session.
-        buffer.Entries.Add(new Entry(text, partner));
+        buffer.Entries.Add(new Entry(text, partner, sender));
     }
 
     /// <summary>
@@ -419,12 +432,13 @@ public sealed class MessageHistoryService
     /// backfill walks the stored log oldest-first, so each buffer ends up as
     /// [stored, oldest to newest][live, oldest to newest].
     /// </summary>
-    public void AddOlder(string key, string text, TellTarget? partner = null)
+    public void AddOlder(string key, string text, TellTarget? partner = null,
+        TellTarget? sender = null)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
         if (!_byKey.TryGetValue(key, out var buffer)) return;
 
-        buffer.Entries.Insert(buffer.Backfilled, new Entry(text, partner));
+        buffer.Entries.Insert(buffer.Backfilled, new Entry(text, partner, sender));
         buffer.Backfilled++;
     }
 
@@ -686,6 +700,24 @@ public sealed class MessageHistoryService
             for (var i = start; i >= 0; i--)
                 if (buf[i].Partner != null) return buf[i].Partner;
             return null;
+        }
+    }
+
+    /// <summary>
+    /// The player on the history line currently in focus (or the newest line
+    /// when not browsing), from the game's <c>PlayerPayload</c>. Null when that
+    /// line has no player sender (system text, battle log, …). Unlike
+    /// <see cref="CurrentTellPartner"/> this does not walk older lines — the
+    /// menu/target action must apply to the line being heard, not a neighbour.
+    /// </summary>
+    public TellTarget? CurrentChatPlayer
+    {
+        get
+        {
+            var buf = Current().Entries;
+            if (buf.Count == 0) return null;
+            var i = _cursor >= 0 && _cursor < buf.Count ? _cursor : buf.Count - 1;
+            return buf[i].Sender;
         }
     }
 

@@ -28,9 +28,9 @@ public sealed class LegacyChatHistoryService
 {
     public enum Category { Dialogue, Say, Shout, Party, Alliance, Tell, FreeCompany, System, Loot }
 
-    /// <summary>One archived line: the spoken text plus, for tells, who it was
-    /// with (null for every other channel).</summary>
-    private sealed record Entry(string Text, TellTarget? Partner);
+    /// <summary>One archived line. <see cref="Partner"/> is tell-only;
+    /// <see cref="Sender"/> is any <c>PlayerPayload</c> sender.</summary>
+    private sealed record Entry(string Text, TellTarget? Partner, TellTarget? Sender);
 
     // Reihenfolge beim Durchschalten (vorwärts/rückwärts), wie das Plugin sie
     // ausliefert. Der Spieler darf sie im Einstellungsmenü umsortieren und
@@ -112,14 +112,16 @@ public sealed class LegacyChatHistoryService
     /// <summary>Adds a message to a category's ring buffer (newest last).</summary>
     /// <param name="partner">For tells, the other side as the game delivered it -
     /// this is what makes answering from the history possible.</param>
-    public void Add(Category category, string text, TellTarget? partner = null)
+    /// <param name="sender">Any chat line whose sender carried a PlayerPayload.</param>
+    public void Add(Category category, string text, TellTarget? partner = null,
+        TellTarget? sender = null)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
         if (!_buffers.TryGetValue(category, out var buf)) return;
 
         // Nothing is dropped, so the cursor never has to be pulled along: an
         // entry keeps its index for the whole session.
-        buf.Add(new Entry(text, partner));
+        buf.Add(new Entry(text, partner, sender));
     }
 
     /// <summary>The category currently selected for browsing.</summary>
@@ -192,6 +194,19 @@ public sealed class LegacyChatHistoryService
             for (var i = start; i >= 0; i--)
                 if (buf[i].Partner != null) return buf[i].Partner;
             return null;
+        }
+    }
+
+    /// <summary>Player on the focused history line — see
+    /// <see cref="MessageHistoryService.CurrentChatPlayer"/>.</summary>
+    public TellTarget? CurrentChatPlayer
+    {
+        get
+        {
+            var buf = _buffers[Order[_catIndex]];
+            if (buf.Count == 0) return null;
+            var i = _cursor >= 0 && _cursor < buf.Count ? _cursor : buf.Count - 1;
+            return buf[i].Sender;
         }
     }
 

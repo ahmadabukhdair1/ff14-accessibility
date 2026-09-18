@@ -13,12 +13,141 @@ Dalamud-Plugin für FF14 das blinden Spielern via NVDA/TOLK ermöglicht das Spie
   committen/pushen**, bis der User ausdrücklich freigibt. Öffentliches
   Release **v6.08.5** enthält die Kategorie **nicht** (aus dem Stand entfernt,
   RecipeNote-UI-Vorlesen bleibt).
-- **AccessibleVendorSell (ab 2026-09-06):** Eigenes Plugin, lokal in
-  `devPlugins\AccessibleVendorSell`. **Nicht** ins Haupt-Release / repo.json,
-  bis der User freigibt. Absicherung: `.gitignore` (`AccessibleVendorSell/`,
-  `tools/enable-vendorsell/`).
+- **AccessibleVendorSell (ab 2026-09-06, User 2026-09-18: NIEMALS):**
+  Eigenes Plugin, lokal in `devPlugins\AccessibleVendorSell`.
+  **Nie committen, nie pushen, nie in latest.zip / repo.json** — auch nicht
+  „kurz mit“ oder in einem Sammel-Release. Absicherung: `.gitignore`
+  (`AccessibleVendorSell/`, `tools/enable-vendorsell/`). Vor jedem Push prüfen.
+- **BossMod-Hotkeys Minus / Alt+Minus:** nur lokal (Temp-Backup beim
+  Release-Push 2026-09-18). **Nie** committen/pushen. Details: PRIVAT.txt.
 
-## STAND JETZT (2026-09-07): RELEASE v6.08.8 — TASTENLISTE MIT BESCHREIBUNG
+## STAND JETZT (2026-09-18): PR 28 — FREISCHALT-HINWEIS BEI ANNEHMBAREN QUESTS
+
+>>> AUFTRAG: Offene PRs prüfen; PR 28 lokal portieren.
+
+>>> FIX (Port aus PR 28):
+    - QuestDestination.Unlock aus Quest-Blatt (InstanceContentUnlock,
+      Action/Emote/ClassJob/System/OtherReward).
+    - Nur bei annehmbaren Quests in der Ansage (NavigationService).
+    - Loc DE/EN; Log einmal je Sitzung, ob Felder in Lumina existieren.
+
+>>> TEST: Plugin neu laden. Kategorie annehmbare Quests:
+    1. Quest die Aktion/Dungeon/Emote freischaltet → Teilsatz hinter dem Namen.
+    2. Angenommene Quests → kein Freischalt-Teilsatz.
+    3. Log: "[Quest] Freischalt-Felder vorhanden" oder FEHLEN.
+
+## STAND DAVOR (2026-09-18): JOB-ANZEIGE — EIGENE TÖNE + VORSCHAU
+
+>>> AUFTRAG: Pro bereiter Ressource unterschiedlicher Ton; unter Umschalt+F9
+    nachhören können.
+
+>>> FIX:
+    - GaugeReadyCueId + Frequenzleiter; jede Flanke enqueued eigenen Ton.
+    - CueService.Enqueue für mehrere Flanken in einem Frame.
+    - Menü Töne: Lautstärke „Job-Anzeige Ton“ + „Job-Anzeige Töne nachhören“.
+    - Fähigkeit-bereit (Cooldown) behält den alten Rising-Blip.
+
+>>> TEST: Plugin neu laden.
+    1. Umschalt+F9 → Töne → Job-Anzeige Töne nachhören → Einträge anspielen.
+    2. Im Kampf: Zorn/Lilie/… voll → eigener Ton + Warnstimme.
+    3. Lautstärke 0 → nur Sprache, kein Ton.
+
+## STAND DAVOR (2026-09-18): LEVEL-GATTER FÜR ALLE JOB-ANZEIGEN
+
+>>> AUFTRAG: Alle Gauge-Flanken nur ansagen, wenn der zugehörige Skill
+    freigeschaltet ist (wie bisher SMN/SAM).
+
+>>> FIX:
+    - Jede Collect-Flanke und On-Demand-Zeile gated über Action-Sheet
+      ClassJobLevel (Edge/EdgeAtCap mit actionId).
+    - Gate-IDs: erster PrimaryCost-Spender bzw. Unlock der Mode/Fahne
+      (Tabelle in docs/game-api.md).
+    - SMN Aetherflow → Fester 181; SAM Sen/Kenki ebenfalls gegatet.
+
+>>> TEST: Plugin neu laden. Job-Anzeige an.
+    1. Job unter Gate-Stufe: Gauge voll → keine Flanke für die Ressource.
+    2. Nach Level-up über Gate: nächste echte leer→voll Flanke (nicht allein
+       durch Level-up).
+    3. On-Demand unter Stufe: Ressource nicht als bereit nennen.
+    4. Stichprobe: WAR <35, WHM <52, SAM Kenki <52, SMN Aetherflow unter Fester.
+    5. SMN Karfunkel + SAM Shoha/Tsubame weiter wie bisher.
+
+## STAND DAVOR (2026-09-18): SMN/ACN — RUBIN/TOPAS/SMARAGD ANSAGEN
+
+>>> AUFTRAG: Wenn Rubin/Topas/Smaragd-Leisten voll sind (Karfunkel-Primae
+    rufbar), ansagen — auch als Hermetiker.
+
+>>> FIX:
+    - Job 26 (Hermetiker) + 27 (Beschwörer) teilen CollectSummoner/AnnounceSummoner.
+    - Ready-Bits unverändert (`IsIfritReady` …); Gatter auf Karfunkel-Aktionen
+      25802/25803/25804 (Stufen aus Sheet).
+    - Name: Rubin/Topas/Smaragd unter Primae-Stufe, sonst Ifrit/Titan/Garuda.
+    - Zusätzlich Flanke „alle drei bereit“ (wie Samurai drei Sen).
+    - Loc DE/EN; game-api.md ergänzt.
+
+>>> TEST: Plugin neu laden. Job-Anzeige an (Standard).
+    1. Hermetiker oder SMN unter 30: nach Kampfende / Leiste voll → „Rubin
+       bereit“ (ab 15 auch Topas, ab 22 Smaragd), nicht still.
+    2. Ab 30/35/45: Namen Ifrit/Titan/Garuda.
+    3. Alle drei Bits gesetzt → zusätzlich „alle drei bereit“.
+    4. Strg+Umschalt+F10 spiegelt denselben Stand.
+    5. Option „Job-Anzeige wieder verfügbar“ aus → keine Flanken.
+
+## STAND DAVOR (2026-09-17): PR 27 PORT — MITSTREITER-TASTE
+
+>>> AUFTRAG: Offene GitHub-PRs prüfen; fehlendes lokal einbauen.
+
+>>> BEFUND:
+    - Lokal schon (Playtest-Merges): PR 18–26.
+    - Fehlt im HEAD: PR 27 (Kompanon), PR 7 (Docs).
+    - Mitstreiter-Vorlesen (6.08.12–15) war schon in der Working Tree —
+      sauberer als PR 27 (ClientStructs/BuddyNumberArray, kein russischer
+      Node-ID-Pfad). Gap: Taste zum Öffnen/erneut Vorlesen.
+
+>>> FIX (6.08.20, Port aus PR 27 auf bestehenden Buddy-Pfad):
+    - KeyCompanionWindow = Strg+Umschalt+C.
+    - Zu → /companion + Ansage „Mitstreiter-Fenster wird geöffnet.“
+    - Offen → AnnounceCompanionWindow (= BuildBuddyWindowSummary).
+    - Safe-Key + Mitstreiter-Doku in docs/game-api.md.
+    - BuddySkill-Zweig-Summary bewusst nicht: Levels-Byte-Zuordnung
+      Index→Rolle am DE-Client nicht belegt; PR-27-IDs nicht übernommen.
+    - PR 7 (englische Docs) nicht gemerged — Konflikt mit lokaler
+      docs/game-api.md-WIP.
+
+>>> TEST: Plugin neu laden („6.08.20“ / „Mitstreiter Taste“).
+    1. Fenster zu → Strg+Umschalt+C → Öffnen-Ansage, Fenster kommt.
+    2. Offen → dieselbe Taste → volle Zusammenfassung, kein zweites Öffnen.
+    3. Kunststücke Fokus + Beschreibung wie 6.08.13/14.
+    4. Chocobo-Rang-Hotkey (Strg+Umschalt+L) unverändert.
+
+>>> HINWEIS: Uncommittete STATUS-Stände (Marktbrett, Mitstreiter 6.08.12–15,
+    BossMod-Tasten u. a., Sep 10–15) gingen bei einem checkout verloren.
+    Code dazu liegt weiter in der Working Tree; nur die STATUS-Prosa fehlt.
+    Falls Backup/Vorgängerversion da: bitte zurückspielen.
+
+## STAND DAVOR (2026-09-15): MARKTBRETT — ENTER AKTIVIERT KATEGORIE
+
+>>> PROBLEM (User): Auf „Thaumaturgen-Waffe“ bestätigen → keine Waffen,
+    Liste ändert sich nicht.
+
+>>> URSACHE (Log 21:48–49): Fokus liest den Namen, ListLen bleibt 0.
+    Tastaturfokus allein checked den RadioButton nicht und startet keine
+    Suche (wie Config-Reiter). Suche-Button ohne Kategorie ebenfalls Len=0.
+
+>>> FIX:
+    - Enter in ItemSearch: RadioButton per Click-Event (wie ConfigSystem),
+      sonst FilterLabels + SetModeFilter/RunSearch (ClientStructs).
+    - Suche-Button: RunSearch.
+    - Ansage „Suche: …“; Treffer weiter über AnnounceLateFilledList.
+
+>>> TEST: Plugin neu laden. Marktbrett:
+    1. Auf Thaumaturgen-Waffe → Enter.
+    2. Erwartung: „Suche: Thaumaturgen-Waffe“, dann Trefferanzahl/Namen.
+    3. Log: [ItemSearch] Kategorie: oder SetModeFilter / RunSearch.
+    4. Dump wenn Preise/Kaufen noch stumm.
+    (Teststand unklar — Ergebnis vom User noch offen.)
+
+## STAND DAVOR (2026-09-07): RELEASE v6.08.8 — TASTENLISTE MIT BESCHREIBUNG
 
 >>> AUFTRAG (User): Gemeint war nicht Strg+F9-Aktionsleiste, sondern die
     Tastenliste im Belegen-Menü: „Taste 1, Ruin, 1 von 36“ — danach die

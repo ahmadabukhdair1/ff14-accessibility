@@ -878,6 +878,7 @@ public sealed class NavigationService
     private bool IsDeepRoomCategory => Categories[_categoryIndex].Cat == NavCategory.DeepRooms;
 
     private bool IsQuestCategory           => Categories[_categoryIndex].Cat == NavCategory.QuestGoals;
+    private bool IsQuestObjectCategory     => Categories[_categoryIndex].Cat == NavCategory.QuestObjects;
     private bool IsUnacceptedQuestCategory => Categories[_categoryIndex].Cat == NavCategory.AcceptableQuests;
     private bool IsLevequestCategory       => Categories[_categoryIndex].Cat == NavCategory.Levequests;
     private bool IsPlacesCategory          => Categories[_categoryIndex].Cat == NavCategory.Waypoints;
@@ -1174,6 +1175,14 @@ public sealed class NavigationService
             return;
         }
 
+        if (IsQuestObjectCategory)
+        {
+            var objects = GetCategoryObjects().Count;
+            var triggers = _questMarkers.GetEventRangeDestinations().Count;
+            _tolk.SpeakInterrupt(AccessibilityStrings.CategoryQuestObjectCount(objects, triggers));
+            return;
+        }
+
         if (IsLevequestCategory)
         {
             // Deduplicated list, so the spoken count matches what the player
@@ -1336,6 +1345,12 @@ public sealed class NavigationService
         if (IsQuestCategory || IsUnacceptedQuestCategory)
         {
             CycleQuestDestination(direction, player, IsUnacceptedQuestCategory);
+            return;
+        }
+
+        if (IsQuestObjectCategory)
+        {
+            CycleQuestObjectOrTrigger(direction, player);
             return;
         }
 
@@ -1564,6 +1579,85 @@ public sealed class NavigationService
         _tolk.SpeakInterrupt(text);
     }
 
+    // ── Quest-Objekte: live EventObjs + EventRange-Auslöser ──────────
+
+    /// <summary>
+    /// Cycles Quest objects as a merged list: live EventObjs/Treasures the
+    /// markers or nameplates flag, PLUS Level Type-49 EventRange walk-in
+    /// volumes for accepted quests in this zone. Ranges are not in the
+    /// ObjectTable — they become <see cref="SelectedQuestDestination"/> so
+    /// Numpad 3 walks into the small circle (same path as Quest goals).
+    /// </summary>
+    private void CycleQuestObjectOrTrigger(int direction, IGameObject player)
+    {
+        var live = GetCategoryObjects();
+        var ranges = _questMarkers.GetEventRangeDestinations();
+
+        // Unified distance order so the nearest thing — object or trigger —
+        // comes first regardless of kind.
+        var entries = new List<(float Dist, bool IsRange, int Index)>(live.Count + ranges.Count);
+        for (var i = 0; i < live.Count; i++)
+            entries.Add((Vector3.Distance(player.Position, live[i].Position), false, i));
+        for (var i = 0; i < ranges.Count; i++)
+            entries.Add((Vector3.Distance(player.Position, ranges[i].Position), true, i));
+        entries.Sort((a, b) => a.Dist.CompareTo(b.Dist));
+
+        if (entries.Count == 0)
+        {
+            SelectedQuestDestination = null;
+            SelectedObjectDestination = null;
+            _tolk.SpeakInterrupt(AccessibilityStrings.NoQuestObjectsOrTriggers);
+            return;
+        }
+
+        var count = entries.Count;
+        _cycleIndex = ((_cycleIndex + direction) % count + count) % count;
+        var pick = entries[_cycleIndex];
+
+        if (pick.IsRange)
+        {
+            var dest = ranges[pick.Index];
+            SelectedObjectDestination = null;
+            _ownSelectionId = 0;
+            SelectedQuestDestination = dest;
+
+            var story = AccessibilityStrings.QuestKindPrefix(dest.Kind);
+            var level = dest.Level > 0 ? AccessibilityStrings.LevelPrefix(dest.Level) : string.Empty;
+            var text = $"{AccessibilityStrings.LeveRolePrefix(QuestMarkerRole.QuestTrigger)}" +
+                       $"{level}{story}{dest.QuestName}, " +
+                       $"{FormatDistance(pick.Dist)}, {CalculateDirection(player, dest.Position)}" +
+                       $"{GoalCircleHint(dest, player)}. " +
+                       $"{AccessibilityStrings.Counter(_cycleIndex + 1, count)}.";
+            _log.Info($"[Nav] Quest-Auslöser: {text}");
+            _tolk.SpeakInterrupt(text);
+            return;
+        }
+
+        // Live object — same announcement path as the ordinary object browser.
+        SelectedQuestDestination = null;
+        var obj = live[pick.Index];
+        _ownSelectionId = obj.GameObjectId;
+        _targetManager.Target = obj;
+        SelectedObjectDestination = new ObjectDestination(
+            obj.GameObjectId,
+            _objectNames.Describe(obj),
+            obj.Position);
+
+        var actualId = _targetManager.Target?.GameObjectId ?? 0;
+        var rejected = actualId != obj.GameObjectId;
+        if (rejected)
+            _log.Info($"[Nav] Target-Set ABGELEHNT: wollte {obj.GameObjectId:X} " +
+                      $"({obj.Name.TextValue}), ist weiterhin {actualId:X}");
+
+        var description = DescribeObject(obj);
+        var textObj = $"{description}, {FormatDistance(pick.Dist)}, " +
+                      $"{CalculateDirection(player, obj.Position)}" +
+                      (rejected ? AccessibilityStrings.NotTargetedSuffix : string.Empty) +
+                      $". {AccessibilityStrings.Counter(_cycleIndex + 1, count)}.";
+        _log.Info($"[Nav] Quest-Objekt: {textObj}");
+        _tolk.SpeakInterrupt(textObj);
+    }
+
     // ── Quest-Ziele: durch Marker der angenommenen Quests blättern ──
 
     private void CycleQuestDestination(int direction, IGameObject player, bool unaccepted)
@@ -1599,6 +1693,12 @@ public sealed class NavigationService
         // game gave us no level rather than announcing a made-up "Stufe 0".
         var level = dest.Level > 0 ? AccessibilityStrings.LevelPrefix(dest.Level) : string.Empty;
 
+        // Was die Quest laut Quest-Blatt freischaltet - die Frage, die sich bei
+        // ANNEHMBAREN Quests stellt ("welche davon geben mir etwas?"). Bei
+        // angenommenen Quests bleibt sie weg: dort hat die Spielerin die
+        // Freischaltung ohnehin schon in der Hand.
+        var unlock = unaccepted && dest.Unlock.Length > 0 ? $", {dest.Unlock}" : string.Empty;
+
         // Current objective ("what is still missing", e.g. "Aurelias erlegen 0/3")
         // from the on-screen quest tracker. Only tracked quests have one; the
         // marker tooltip stays as a fallback for the rest.
@@ -1610,7 +1710,7 @@ public sealed class NavigationService
         string text;
         if (dest.InCurrentZone)
         {
-            text = $"{level}{story}{dest.QuestName}{todo}, " +
+            text = $"{level}{story}{dest.QuestName}{unlock}{todo}, " +
                    $"{FormatDistance(Vector3.Distance(player.Position, dest.Position))}, " +
                    $"{CalculateDirection(player, dest.Position)}" +
                    $"{GoalCircleHint(dest, player)}.{detail}";
@@ -1621,7 +1721,7 @@ public sealed class NavigationService
             // and the transition that leads there (BFS over the map graph).
             var zone = _places.GetMapName(dest.MapId);
             var hop  = _places.FindFirstHopToMap(dest.MapId, out var hops);
-            text = $"{level}{story}{dest.QuestName}{todo}, " +
+            text = $"{level}{story}{dest.QuestName}{unlock}{todo}, " +
                    (string.IsNullOrEmpty(zone) ? AccessibilityStrings.InAnotherArea : AccessibilityStrings.InArea(zone));
             if (hop != null)
             {
@@ -2010,9 +2110,9 @@ public sealed class NavigationService
     /// The distance alone is not usable information: "Gefräßige Puks, 75 Meter"
     /// leaves open whether that is inside or outside, because the circle is 50 m
     /// wide (MarkerInfo.Radius, measured 2026-08-18 - leve goals in La Noscea
-    /// carry r=50). A sighted player reads that circle straight off the map. It
-    /// also explains what Numpad 3 does: the walk stops at the RIM, so
-    /// "angekommen" at 51 m is the rim, not the middle.
+    /// carry r=50). A sighted player reads that circle straight off the map.
+    /// Numpad 3 walks to the CENTRE (same stop range as point markers); this
+    /// hint still reports rim distance while browsing.
     ///
     /// Empty for point markers (radius 0) - there the plain distance already is
     /// the whole truth.

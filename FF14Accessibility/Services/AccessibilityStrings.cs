@@ -44,6 +44,14 @@ public static partial class AccessibilityStrings
     public static string CategoryLabel(string name) =>
         IsGerman ? $"Kategorie {name}." : $"Category {name}.";
 
+    /// <summary>ItemSearch: Enter on a category started a market search.</summary>
+    public static string MarketSearching(string category) =>
+        IsGerman ? $"Suche: {category}." : $"Searching: {category}.";
+
+    /// <summary>ItemSearch: Search button / RunSearch without a category label.</summary>
+    public static string MarketSearchStarted =>
+        IsGerman ? "Suche gestartet." : "Search started.";
+
     /// <summary>
     /// Rank tier button in the left column of the seal shop. Those buttons carry
     /// no text at all - the game draws the rank insignia of the ranks they cover
@@ -924,8 +932,30 @@ public static partial class AccessibilityStrings
         QuestMarkerRole.LeveGiver     => IsGerman ? "Freibrief-Geber: " : "Levequest giver: ",
         QuestMarkerRole.LeveObjective => IsGerman ? "Freibrief-Ziel: "  : "Levequest goal: ",
         QuestMarkerRole.LeveEnemy     => IsGerman ? "Freibrief-Gegner: " : "Levequest enemy: ",
+        QuestMarkerRole.QuestTrigger  => IsGerman ? "Auslöser: " : "Trigger: ",
         _                             => string.Empty,
     };
+
+    /// <summary>Quest-objects category header: live EventObjs plus sheet EventRange
+    /// walk-in volumes for accepted quests in this zone.</summary>
+    public static string CategoryQuestObjectCount(int objects, int triggers) =>
+        IsGerman
+            ? objects > 0 && triggers > 0
+                ? $"Quest-Objekte: {objects} Objekte, {triggers} Auslöser in der Nähe."
+                : triggers > 0
+                    ? $"Quest-Objekte: {triggers} Auslöser in der Nähe."
+                    : $"Quest-Objekte: {objects} in der Nähe."
+            : objects > 0 && triggers > 0
+                ? $"Quest objects: {objects} objects, {triggers} triggers nearby."
+                : triggers > 0
+                    ? $"Quest objects: {triggers} triggers nearby."
+                    : $"Quest objects: {objects} nearby.";
+
+    /// <summary>Nothing under Quest objects: no live props and no EventRanges.</summary>
+    public static string NoQuestObjectsOrTriggers =>
+        IsGerman
+            ? "Keine Quest-Objekte und keine Auslöser in der Nähe."
+            : "No quest objects or triggers nearby.";
 
     /// <summary>How many of this monster the leve wants, appended to an enemy
     /// entry ("Freibrief-Gegner: Stolper-Fungus, 7 gesucht, 12 Meter ...").
@@ -1201,6 +1231,43 @@ public static partial class AccessibilityStrings
         _                    => string.Empty,
     };
     public static string LevelPrefix(int level) => IsGerman ? $"Stufe {level}, " : $"Level {level}, ";
+
+    // ── Was eine Quest freischaltet ──────────────────────────────────
+    //
+    // Bei den noch NICHT angenommenen Quests ist die eigentliche Frage "welche
+    // davon geben mir etwas?" - die Markierung allein sagt das nicht. Quelle ist
+    // das Quest-Blatt: Felder, deren NAME die Sache ausspricht
+    // (InstanceContentUnlock, ActionReward, GeneralActionReward, EmoteReward,
+    // ClassJobUnlock, SystemReward, OtherReward; im Blatt der Installation
+    // tragen 406 von 5373 Zeilen mindestens eines).
+    //
+    // Die Sätze sind TEILSAETZE ohne Schlusspunkt: sie stehen im Ansage-Satz
+    // direkt hinter dem Quest-Namen, wo danach noch Entfernung und Richtung
+    // folgen. Ist der Name des Freigeschalteten nicht lesbar, faellt nur der
+    // Name weg - "schaltet ein Dungeon frei" bleibt wahr, ein geratener Name
+    // waere es nicht.
+    public static string QuestUnlocksDungeon(string name) => name.Length > 0
+        ? (IsGerman ? $"schaltet das Dungeon '{name}' frei" : $"unlocks the dungeon '{name}'")
+        : (IsGerman ? "schaltet ein Dungeon frei" : "unlocks a dungeon");
+
+    public static string QuestUnlocksEmote(string name) => name.Length > 0
+        ? (IsGerman ? $"schaltet die Emote '{name}' frei" : $"unlocks the emote '{name}'")
+        : (IsGerman ? "schaltet eine Emote frei" : "unlocks an emote");
+
+    public static string QuestUnlocksAction(string name) => name.Length > 0
+        ? (IsGerman ? $"schaltet die Aktion '{name}' frei" : $"unlocks the action '{name}'")
+        : (IsGerman ? "schaltet eine Aktion frei" : "unlocks an action");
+
+    public static string QuestUnlocksClassJob(string name) => name.Length > 0
+        ? (IsGerman ? $"schaltet '{name}' frei" : $"unlocks '{name}'")
+        : (IsGerman ? "schaltet eine Klasse oder einen Job frei" : "unlocks a class or job");
+
+    /// <summary>SystemReward / OtherReward: die Felder sind gesetzt, ihr Inhalt
+    /// ist aber nicht aufloesbar - es gibt im Lumina-Stand des Clients kein Blatt
+    /// dazu. Also wird gesagt, WAS gemessen ist, und nicht geraten, WAS es ist.</summary>
+    public static string QuestUnlocksSomething =>
+        IsGerman ? "schaltet etwas Neues frei" : "unlocks something new";
+
     public static string InArea(string zone)    => IsGerman ? $"im Gebiet {zone}." : $"in the area {zone}.";
     public static string InAnotherArea       => IsGerman ? "in einem anderen Gebiet." : "in another area.";
     public static string NumpadWalksToTransition => IsGerman ? " Nummernblock 3 läuft zum Übergang." : " Numpad 3 walks to the transition.";
@@ -1508,6 +1575,35 @@ public static partial class AccessibilityStrings
         IsGerman
             ? $"Flüstern an {target} nicht möglich."
             : $"Cannot set tell target {target}.";
+
+    /// <summary>No player payload on the focused chat-history line.</summary>
+    public static string ChatPlayerNone =>
+        IsGerman
+            ? "Diese Nachricht hat keinen Spieler-Absender."
+            : "This message has no player sender.";
+
+    /// <summary>Context menu opened for the chat sender.</summary>
+    public static string ChatPlayerMenuOpened(string name) =>
+        IsGerman
+            ? $"Menü für {name}."
+            : $"Menu for {name}.";
+
+    /// <summary>Sender not in ObjectTable / party HUD / social lists.</summary>
+    public static string ChatPlayerNotFound(string name) =>
+        IsGerman
+            ? $"{name} nicht gefunden — nicht geladen und nicht in Freunde, Gruppe oder FG."
+            : $"{name} not found — not loaded and not in friends, party, or free company.";
+
+    /// <summary>Found in a social list in another zone; menu needs a live object.</summary>
+    public static string ChatPlayerElsewhere(string name, string zone) =>
+        IsGerman
+            ? $"{name} gemeldet in {zone}. Menü und Laufen brauchen ihn hier geladen."
+            : $"{name} reported in {zone}. Menu and walk need them loaded here.";
+
+    /// <summary>Social list had a location id the sheets do not name.</summary>
+    public static string ChatPlayerZoneUnknown =>
+        IsGerman ? "unbekanntem Gebiet" : "an unknown area";
+
     public static string InputFieldValue(string typed) =>
         typed.Length > 0
             ? (IsGerman ? $"Eingabefeld: {typed}" : $"Input field: {typed}")
@@ -1930,6 +2026,82 @@ public static partial class AccessibilityStrings
             ? (stars == 1 ? " 1 Stern." : $" {stars} Sterne.")
             : (stars == 1 ? " 1 star." : $" {stars} stars.");
 
+    // ── Mitstreiter-Fenster (Addon Buddy) ────────────────────────────
+    // Fenstertitel kommt aus dem Spiel; Fallback nur wenn der Window-Knoten leer ist.
+    public static string BuddyWindowTitleFallback =>
+        IsGerman ? "Mitstreiter" : "Companion";
+
+    public static string BuddyWindowNoCompanion(string title) =>
+        IsGerman
+            ? $"{title}. Kein Begleit-Chocobo."
+            : $"{title}. No companion chocobo.";
+
+    /// <summary>
+    /// Full open announcement for the Mitstreiter window. Rank part already
+    /// includes "Chocobo Rang …" wording from the hotkey strings. HP/time are
+    /// omitted when max is 0 (bars not painted yet).
+    /// </summary>
+    public static string BuddyWindowSummary(
+        string title,
+        string name,
+        string rankPart,
+        int hpCur,
+        int hpMax,
+        int timeCurSec,
+        int timeMaxSec,
+        int skillPoints,
+        string tabLabel)
+    {
+        var parts = new List<string> { title };
+        if (!string.IsNullOrWhiteSpace(name))
+            parts.Add(name);
+        if (!string.IsNullOrWhiteSpace(rankPart))
+            parts.Add(rankPart.Trim().TrimEnd('.'));
+        if (hpMax > 0)
+            parts.Add(BuddyHp(hpCur, hpMax));
+        if (timeMaxSec > 0)
+            parts.Add(BuddySummonTime(timeCurSec, timeMaxSec));
+        if (skillPoints > 0)
+            parts.Add(BuddySkillPoints(skillPoints));
+        if (!string.IsNullOrWhiteSpace(tabLabel))
+            parts.Add(tabLabel);
+        return string.Join(". ", parts) + ".";
+    }
+
+    public static string BuddyHp(int current, int max) =>
+        IsGerman
+            ? $"LP {current} von {max}"
+            : $"HP {current} of {max}";
+
+    public static string BuddySkillPoints(int points) =>
+        IsGerman
+            ? (points == 1 ? "1 Fertigkeitspunkt" : $"{points} Fertigkeitspunkte")
+            : (points == 1 ? "1 skill point" : $"{points} skill points");
+
+    public static string BuddySummonTime(int currentSec, int maxSec) =>
+        IsGerman
+            ? $"Zeit {FormatBuddyClock(currentSec)} von {FormatBuddyClock(maxSec)}"
+            : $"Time {FormatBuddyClock(currentSec)} of {FormatBuddyClock(maxSec)}";
+
+    private static string FormatBuddyClock(int totalSeconds)
+    {
+        if (totalSeconds < 0) totalSeconds = 0;
+        var m = totalSeconds / 60;
+        var s = totalSeconds % 60;
+        return $"{m}:{s:D2}";
+    }
+
+    /// <summary>
+    /// Spoken while waiting for <c>/companion</c> to open the Mitstreiter
+    /// window — a silent failure must not look like a silent mod.
+    /// </summary>
+    public static string CompanionOpening =>
+        IsGerman ? "Mitstreiter-Fenster wird geöffnet." : "Opening the companion window.";
+
+    /// <summary>Spoken when the window is missing or not painted yet.</summary>
+    public static string CompanionWindowEmpty =>
+        IsGerman ? "Mitstreiter-Fenster noch leer." : "Companion window still empty.";
+
     // ── Ausruestungsset-Markierung ───────────────────────────────────
     // Das Symbol, das dem sehenden Spieler sagt "steckt in einem gespeicherten
     // Set" - also NICHT verkaufen. Wortwahl wie im Spiel (Addon 756/11993).
@@ -2286,6 +2458,7 @@ public static partial class AccessibilityStrings
         IsGerman ? "Kein Ziel zum Folgen. Erst ein Ziel anwählen." : "No target to follow. Select a target first.";
     public static string FollowSelf =>
         IsGerman ? "Das bist du selbst." : "That is you.";
+
     public static string Following(string name) =>
         IsGerman ? $"Folge {name}." : $"Following {name}.";
     public static string FollowStopped =>
@@ -2889,6 +3062,13 @@ public static partial class AccessibilityStrings
             ? $"Reittiere, {count} Einträge. Nummernblock 8 und 2 blättern, 4 oder 6 wechselt die Liste, Nummernblock 0 wählt, Nummernblock Komma zurück."
             : $"Mounts, {count} entries. Numpad 8 and 2 to browse, 4 or 6 switches the list, Numpad 0 selects, Numpad decimal to go back.";
 
+    /// <summary>Spoken when the menu switches to companion commands
+    /// (Heilen, Warten, Folgen, Haltungen, Kunststücke …).</summary>
+    public static string BuddyActionMenuOpened(int count) =>
+        IsGerman
+            ? $"Chocobo-Kommandos, {count} Einträge. Nummernblock 8 und 2 blättern, 4 oder 6 wechselt die Liste, Nummernblock 0 wählt, Nummernblock Komma zurück."
+            : $"Chocobo commands, {count} entries. Numpad 8 and 2 to browse, 4 or 6 switches the list, Numpad 0 selects, Numpad decimal to go back.";
+
     /// <summary>One browsed entry that has nothing but a name: general actions
     /// and mounts. Same shape as the other browse entries so the menu sounds
     /// consistent no matter which list is open.</summary>
@@ -3108,6 +3288,16 @@ public static partial class AccessibilityStrings
         IsGerman ? "Fähigkeit-bereit-Ansage aus." : "Ability-ready announcements off.";
 
     // ── JobGaugeService: Job-Anzeige, etwas ist wieder verfügbar ──
+    // Karfunkel-Arten (Rubin/Topas/Smaragd) und Primae (Ifrit/Titan/Garuda)
+    // teilen dieselben Ready-Bits; der Name folgt der nutzbaren Aktion.
+    public static string GaugeRubyReady =>
+        IsGerman ? "Rubin bereit" : "Ruby ready";
+    public static string GaugeTopazReady =>
+        IsGerman ? "Topas bereit" : "Topaz ready";
+    public static string GaugeEmeraldReady =>
+        IsGerman ? "Smaragd bereit" : "Emerald ready";
+    public static string GaugeAllGemsReady =>
+        IsGerman ? "alle drei bereit" : "all three ready";
     // Die Namen der Primae sind Eigennamen und in beiden Sprachen gleich; die
     // Sätze drumherum nicht.
     public static string GaugeIfritReady =>
@@ -3135,6 +3325,99 @@ public static partial class AccessibilityStrings
         IsGerman
             ? "Für diesen Job gibt es keine Anzeige."
             : "This job has no gauge.";
+
+    // Samurai (SAMGauge): Sen / Kenki / Meditation / Kaeshi. Rising-edge labels
+    // match the Summoner style ("… bereit" / "… full") so the warning voice stays
+    // short during a fight.
+    public static string GaugeGetsuReady =>
+        IsGerman ? "Getsu bereit" : "Getsu ready";
+    public static string GaugeKaReady =>
+        IsGerman ? "Ka bereit" : "Ka ready";
+    public static string GaugeSetsuReady =>
+        IsGerman ? "Setsu bereit" : "Setsu ready";
+    public static string GaugeThreeSenReady =>
+        IsGerman ? "drei Sen" : "three Sen";
+    public static string GaugeKenkiFull =>
+        IsGerman ? "Kenki voll" : "Kenki full";
+    public static string GaugeMeditationFull =>
+        IsGerman ? "Meditation voll" : "Meditation full";
+    public static string GaugeTsubameReady =>
+        IsGerman ? "Tsubame bereit" : "Tsubame ready";
+    public static string GaugeKenkiAmount(byte kenki) =>
+        IsGerman ? $"Kenki {kenki}" : $"Kenki {kenki}";
+    public static string GaugeMeditationAmount(byte stacks) =>
+        IsGerman ? $"Meditation {stacks}" : $"Meditation {stacks}";
+
+    /// <summary>Short "X full" / "X voll" for gauge capacity edges.</summary>
+    public static string GaugeFull(string name) =>
+        IsGerman ? $"{name} voll" : $"{name} full";
+    /// <summary>Short "X ready" / "X bereit" for ready-flag edges.</summary>
+    public static string GaugeReady(string name) =>
+        IsGerman ? $"{name} bereit" : $"{name} ready";
+    /// <summary>On-demand amount readout.</summary>
+    public static string GaugeAmount(string name, int value) =>
+        $"{name} {value}";
+
+    // Resource display names (DE/EN). Used by every Collect*/Announce* path.
+    public static string GaugeNameBeast => IsGerman ? "Zorn" : "Beast";
+    public static string GaugeNameOath => IsGerman ? "Eid" : "Oath";
+    public static string GaugeNameBlood => IsGerman ? "Blut" : "Blood";
+    public static string GaugeNameDarkArts => IsGerman ? "Dunkle Künste" : "Dark Arts";
+    public static string GaugeNameAmmo => IsGerman ? "Patronen" : "Cartridge";
+    public static string GaugeNameChakra => IsGerman ? "Chakra" : "Chakra";
+    public static string GaugeNameBeastChakra => IsGerman ? "Tierchakra" : "Beast Chakra";
+    public static string GaugeNameNadiLunar => IsGerman ? "Mond-Nadi" : "Lunar Nadi";
+    public static string GaugeNameNadiSolar => IsGerman ? "Sonnen-Nadi" : "Solar Nadi";
+    public static string GaugeNameNadiBoth => IsGerman ? "beide Nadi" : "both Nadi";
+    public static string GaugeNameNinki => IsGerman ? "Ninki" : "Ninki";
+    public static string GaugeNameKazematoi => IsGerman ? "Kazematoi" : "Kazematoi";
+    public static string GaugeNameSoul => IsGerman ? "Seele" : "Soul";
+    public static string GaugeNameShroud => IsGerman ? "Schleier" : "Shroud";
+    public static string GaugeNameEnshroud => IsGerman ? "Schleierform" : "Enshroud";
+    public static string GaugeNameVoidShroud => IsGerman ? "Leerenschleier" : "Void Shroud";
+    public static string GaugeNameLemureShroud => IsGerman ? "Lemurenschleier" : "Lemure Shroud";
+    public static string GaugeNameEyes => IsGerman ? "Drachenaugen" : "Dragon eyes";
+    public static string GaugeNameFirstminds => IsGerman ? "Erster Sinn" : "Firstminds' Focus";
+    public static string GaugeNameLotd => IsGerman ? "Leben des Drachen" : "Life of the Dragon";
+    public static string GaugeNameSoulVoice => IsGerman ? "Seelenstimme" : "Soul Voice";
+    public static string GaugeNameRepertoire => IsGerman ? "Repertoire" : "Repertoire";
+    public static string GaugeNameCodaMage => IsGerman ? "Coda Ballade" : "Mage's Coda";
+    public static string GaugeNameCodaArmy => IsGerman ? "Coda Paean" : "Army's Coda";
+    public static string GaugeNameCodaWanderer => IsGerman ? "Coda Menuett" : "Wanderer's Coda";
+    public static string GaugeNameHeat => IsGerman ? "Hitze" : "Heat";
+    public static string GaugeNameBattery => IsGerman ? "Batterie" : "Battery";
+    public static string GaugeNameOverheat => IsGerman ? "Überhitze" : "Overheat";
+    public static string GaugeNameRobot => IsGerman ? "Automat" : "Automaton";
+    public static string GaugeNameFeathers => IsGerman ? "Federn" : "Feathers";
+    public static string GaugeNameEsprit => IsGerman ? "Esprit" : "Esprit";
+    public static string GaugeNamePolyglot => IsGerman ? "Polyglott" : "Polyglot";
+    public static string GaugeNameParadox => IsGerman ? "Paradoxon" : "Paradox";
+    public static string GaugeNameAstralSoul => IsGerman ? "Astralseele" : "Astral Soul";
+    public static string GaugeNameUmbralHearts => IsGerman ? "Umbralherzen" : "Umbral Hearts";
+    public static string GaugeNameWhiteMana => IsGerman ? "weißes Mana" : "White Mana";
+    public static string GaugeNameBlackMana => IsGerman ? "schwarzes Mana" : "Black Mana";
+    public static string GaugeNameManaStacks => IsGerman ? "Manastapel" : "Mana stacks";
+    public static string GaugeNamePalette => IsGerman ? "Palette" : "Palette";
+    public static string GaugeNamePaint => IsGerman ? "Farbe" : "Paint";
+    public static string GaugeNameCreatureMotif => IsGerman ? "Kreaturmotiv" : "Creature motif";
+    public static string GaugeNameWeaponMotif => IsGerman ? "Waffenmotiv" : "Weapon motif";
+    public static string GaugeNameLandscapeMotif => IsGerman ? "Landschaftsmotiv" : "Landscape motif";
+    public static string GaugeNameMooglePortrait => IsGerman ? "Mogry-Porträt" : "Moogle portrait";
+    public static string GaugeNameMadeenPortrait => IsGerman ? "Madeen-Porträt" : "Madeen portrait";
+    public static string GaugeNameLily => IsGerman ? "Lilie" : "Lily";
+    public static string GaugeNameBloodLily => IsGerman ? "Blutlilie" : "Blood Lily";
+    public static string GaugeNameAetherflow => IsGerman ? "Ätherfluss" : "Aetherflow";
+    public static string GaugeNameFairy => IsGerman ? "Feenanzeige" : "Fairy Gauge";
+    public static string GaugeNameAddersgall => IsGerman ? "Addersgall" : "Addersgall";
+    public static string GaugeNameAddersting => IsGerman ? "Addersting" : "Addersting";
+    public static string GaugeNameEukrasia => IsGerman ? "Eukrasie" : "Eukrasia";
+    public static string GaugeNameCard => IsGerman ? "Karte" : "Card";
+    public static string GaugeNameCrownCard => IsGerman ? "Kronenkarte" : "Crown card";
+    public static string GaugeNameRattlingCoil => IsGerman ? "Rasseln" : "Rattling Coil";
+    public static string GaugeNameSerpentOffering => IsGerman ? "Schlangenopfer" : "Serpent Offerings";
+    public static string GaugeNameSerpentFollowUp => IsGerman ? "Schlangenschwanz" : "Serpent's Tail";
+    public static string GaugeNameThreeBeastChakra =>
+        IsGerman ? "drei Tierchakra" : "three Beast Chakra";
 
     // ════════════════════════════════════════════════════════════════
     //  EmoteService

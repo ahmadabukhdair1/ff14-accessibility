@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Dalamud.Plugin.Services;
 using NAudio.Wave;
 
@@ -6,7 +7,8 @@ namespace FF14Accessibility.Services;
 
 /// <summary>
 /// Plays short one-shot audio cues (not the continuous walk-guide beacon):
-/// waypoint reached and final arrival during the walk guide.
+/// waypoint reached and final arrival during the walk guide, ability-ready,
+/// and per-resource job-gauge ready tones.
 /// The output device is opened lazily on the first cue and kept open; the
 /// provider feeds silence between cues.
 ///
@@ -62,6 +64,34 @@ public sealed class CueService : IDisposable
         if (_config.SkillReadyCueVolume <= 0f) return;
         if (!EnsureOutput()) return;
         _provider!.Trigger(_config.SkillReadyCueVolume, 784f, 1047f);
+    }
+
+    /// <summary>
+    /// Job-gauge resource became available. Each <see cref="GaugeReadyCueId"/>
+    /// has its own rising pair so resources are distinguishable by ear. Several
+    /// edges in one frame enqueue and play back-to-back.
+    /// </summary>
+    public void PlayGaugeReadyTone(GaugeReadyCueId cue)
+    {
+        if (_config.GaugeCueVolume <= 0f) return;
+        if (!EnsureOutput()) return;
+        var (n1, n2) = GaugeReadyCues.Notes(cue);
+        _provider!.Enqueue(_config.GaugeCueVolume, n1, n2);
+    }
+
+    /// <summary>
+    /// Preview a gauge ready tone from the options menu. Uses the configured
+    /// volume, or a quiet floor when the volume is off so the player can still
+    /// learn the mapping. Clears any queued combat cues so the sample is alone.
+    /// Returns false when audio could not start.
+    /// </summary>
+    public bool PlayGaugeReadyPreview(GaugeReadyCueId cue)
+    {
+        if (!EnsureOutput()) return false;
+        var vol = _config.GaugeCueVolume > 0f ? _config.GaugeCueVolume : 0.35f;
+        var (n1, n2) = GaugeReadyCues.Notes(cue);
+        _provider!.Trigger(vol, n1, n2);
+        return true;
     }
 
     /// <summary>
@@ -122,11 +152,12 @@ public sealed class CueService : IDisposable
 
 /// <summary>
 /// Generates one-shot cues on the NAudio playback thread. Outputs silence until
-/// <see cref="Trigger"/> queues a cue; a cue is two struck bell-notes (warm
-/// crystalline timbre, exponential ring-out via <see cref="ToneSynth"/>) whose
-/// frequencies the caller picks per cue (steady high = waypoint reached, falling
-/// = arrived). The trigger fields are written from the framework thread and read
-/// on the audio thread.
+/// <see cref="Trigger"/> or <see cref="Enqueue"/> queues a cue; a cue is two
+/// struck bell-notes (warm crystalline timbre, exponential ring-out via
+/// <see cref="ToneSynth"/>) whose frequencies the caller picks per cue. The
+/// trigger fields are written from the framework thread and read on the audio
+/// thread. <see cref="Enqueue"/> plays cues back-to-back when several gauge
+/// edges fire in one frame.
 /// </summary>
 internal sealed class CueSampleProvider : ISampleProvider
 {
@@ -138,6 +169,9 @@ internal sealed class CueSampleProvider : ISampleProvider
 
     public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(Rate, 2);
 
+    private readonly object _gate = new();
+    private readonly Queue<(float Volume, float Note1, float Note2)> _queue = new();
+
     private volatile float _volume;
     private volatile float _note1 = 988f;
     private volatile float _note2 = 1319f;
@@ -145,8 +179,33 @@ internal sealed class CueSampleProvider : ISampleProvider
     private double _phase;
 
     /// <summary>Queues a single two-note cue at the given volume (0..1) and note
-    /// frequencies. Restarts if already playing.</summary>
+    /// frequencies. Clears any pending queue and restarts immediately.</summary>
     public void Trigger(float volume, float note1, float note2)
+    {
+        lock (_gate)
+        {
+            _queue.Clear();
+            StartCue(volume, note1, note2);
+        }
+    }
+
+    /// <summary>Append a cue. Starts immediately when idle; otherwise plays after
+    /// the current cue (and any already queued) finishes.</summary>
+    public void Enqueue(float volume, float note1, float note2)
+    {
+        lock (_gate)
+        {
+            if (_remaining <= 0 && _queue.Count == 0)
+            {
+                StartCue(volume, note1, note2);
+                return;
+            }
+
+            _queue.Enqueue((Math.Clamp(volume, 0f, 1f), note1, note2));
+        }
+    }
+
+    private void StartCue(float volume, float note1, float note2)
     {
         _volume = Math.Clamp(volume, 0f, 1f);
         _note1 = note1;
@@ -155,12 +214,26 @@ internal sealed class CueSampleProvider : ISampleProvider
         _remaining = TotalSamples;
     }
 
+    private void TryStartNext()
+    {
+        lock (_gate)
+        {
+            if (_remaining > 0) return;
+            if (_queue.Count == 0) return;
+            var next = _queue.Dequeue();
+            StartCue(next.Volume, next.Note1, next.Note2);
+        }
+    }
+
     public int Read(float[] buffer, int offset, int count)
     {
         var frames = count / 2;
         for (var i = 0; i < frames; i++)
         {
             var sample = 0f;
+            if (_remaining <= 0)
+                TryStartNext();
+
             var remaining = _remaining;
             if (remaining > 0)
             {

@@ -173,6 +173,15 @@ public sealed class UIReaderService : IDisposable
         // bleibt leer" (Log 2026-09-02 07:11:04 und 07:11:05). Angesagt wurde
         // dabei nur der Fenstertitel.
         "AOZNotebook",
+        // Mitstreiter (Begleit-Chocobo): eigener Handler (OnBuddyUpdate). Der
+        // generische Pfad sagte nur den Titel und scrapte nacktes "Rang:" ohne
+        // Wert/Name (STATUS + Dump/Log 2026-09-10). Timer-Knoten (Zeit) wuerde
+        // sonst jede Sekunde den Scanner anstossen.
+        "Buddy",
+        // Kind-Fenster Kunststücke / Kommandos: Öffnung sagt der Parent-Reiter;
+        // Skills per Fokus-Tooltip (kein ReadAllTexts).
+        "BuddySkill",
+        "BuddyAction",
     ];
 
     // Addons, bei denen Universal-Update/ReceiveEvent nicht l�uft
@@ -256,6 +265,14 @@ public sealed class UIReaderService : IDisposable
         // Ueberschrift, Seite und Text. Die THEMENLISTE "HowToList" ist NICHT
         // betroffen und bleibt im generischen Pfad - die funktioniert.
         "HowTo",
+        // Mitstreiter: siehe SpecialSetupAddons. Update/ReceiveEvent wuerden
+        // den Countdown (Dump id=29 Text "24:23") und Label-Splitter ansagen.
+        "Buddy",
+        // Kunststücke / Kommando-Ring: Fokus sagt Skills per Tooltip-Action
+        // (TryReadBuddySkillFocusRow). Generischer Scanner scrapte "Kunststücke"
+        // und STUFE-Zeilen ohne Skillnamen (Log 2026-09-10).
+        "BuddySkill",
+        "BuddyAction",
     ];
 
     // HUD-Anzeigen, deren Text/Fokus sich im normalen Spiel laufend aendert -
@@ -309,6 +326,21 @@ public sealed class UIReaderService : IDisposable
         // ohnehin unhoerbar, und den Inhalt sagt ItemCompareService gesammelt auf
         // Strg+Umschalt+F12 an - genau die Loesung, die V5.14 fuer ItemDetail fand.
         "ItemDetailCompare",
+        // ActionDetail — DASSELBE MUSTER (Log 2026-09-14 09:05–09:06, Kommandoliste
+        // Eigenschaften): bei jedem Skill-/Trait-Fokus sprach der Scanner
+        // Job-Kuerzel, "St. N", Beschreibung und Name EINZELN mit SpeakInterrupt;
+        // hoerbar blieb nur die letzte Zeile. Name+Stufe kommen aus dem Fokus-Pfad
+        // (Tooltip-Action oder ActionDetail-Panel-Fallback), die Beschreibung per
+        // Dwell — siehe TryReadActionMenuFocusRow / HandleActionMenuDwell.
+        "ActionDetail",
+        // _CharaSelectDetail / _CharaSelectInfo — DASSELBE MUSTER (Log 2026-09-14
+        // 16:30, Charakterauswahl): bei jedem Listenwechsel sprach der Scanner
+        // Ort, Job, Gottheit, Geburtstag, Clan, Volk und den Namen EINZELN mit
+        // SpeakInterrupt (~20 ms), dazu Fokus "Job St. N, Charakterklasse";
+        // hoerbar blieb oft nur die letzte Zeile. Eine Ansage kommt aus der
+        // List-Navigation (_CharaSelectListMenu): Name + Job/Stufe + Ort —
+        // siehe BeginCharaSelectAnnounce / TickCharaSelectAnnounce.
+        "_CharaSelectDetail", "_CharaSelectInfo",
     ];
 
     // Seit V4.60/61 im Log dokumentierte, aber noch nicht gefixte Spam-Quellen
@@ -567,6 +599,12 @@ public sealed class UIReaderService : IDisposable
         // state (dump 2026-07-31), so the announcement is input-agnostic.
         _addonLifecycle.RegisterListener(AddonEvent.PostUpdate, "Inventory", OnInventoryUpdate);
 
+        // -- Mitstreiter (Buddy / Begleit-Chocobo) ---------------------
+        // PostUpdate: Name/Rang/LP/Zeit und Reiter stehen erst nach dem Aufbau
+        // (Log 2026-09-10: Fokus-Text "Herbeigerufen" 17 ms nach leer).
+        // SpecialSetup/Update halten den generischen Scanner raus.
+        _addonLifecycle.RegisterListener(AddonEvent.PostUpdate, "Buddy", OnBuddyUpdate);
+
         // MountNoteBook (Reittier-Verzeichnis): announce the active view tab
         // (Favoriten/Alle/Suche) and page when they change. Source is the
         // agent's own ViewType + CurrentSelection->Page (verified 2026-07-26 to
@@ -755,6 +793,17 @@ public sealed class UIReaderService : IDisposable
             _tolk.SpeakInterrupt(title);
         }
 
+        // Kommandoliste (ActionMenu): hat keine brauchbare AtkComponentList — die
+        // Slots sind Icons/DragDrop. FindListInAddon fand trotzdem Len=0 und nach
+        // 1 s "Keine Einträge" (Log 2026-09-14 09:05:50–51), was die Abschnitte
+        // Kommandos/Rolle/Eigenschaften uebertoente. Fokus liest die Eintraege.
+        if (name == "ActionMenu")
+        {
+            _noListCache.Add(name);
+            _emptyListSince.Remove(name);
+            return;
+        }
+
         var list = FindListInAddon(addon);
         if (list != null)
         {
@@ -767,10 +816,15 @@ public sealed class UIReaderService : IDisposable
 
             // Empty at this instant usually means "not filled yet", not "empty"
             // - decided a few frames later by AnnounceLateFilledList.
+            // ItemSearch: leere Ergebnisliste beim Oeffnen ist der Normalfall
+            // (Kategorien links, Treffer rechts erst nach Suche — Dump/Log
+            // 2026-09-15). Trotzdem beobachten, aber Log klar halten.
             if (count <= 0)
             {
                 _emptyListSince[name] = DateTime.UtcNow;
-                _log.Info($"[Accessibility] {name}: Liste noch leer, Ansage aufgeschoben.");
+                _log.Info(name == "ItemSearch"
+                    ? $"[Accessibility] {name}: Ergebnisliste leer (Kategorie/Suche), Ansage aufgeschoben."
+                    : $"[Accessibility] {name}: Liste noch leer, Ansage aufgeschoben.");
                 return;
             }
 
@@ -864,6 +918,13 @@ public sealed class UIReaderService : IDisposable
 
         if (name == "_TitleMenu")
             ResetTitleMenuState();
+
+        if (name == "_CharaSelectListMenu")
+        {
+            _charaSelectPendingName = string.Empty;
+            _charaSelectDeferFrames = 0;
+            _charaSelectLastSpoken = string.Empty;
+        }
 
         if (name is "Title" or "_TitleMenu")
             _activeScreenContext = GetCurrentScreenContext();
@@ -1020,10 +1081,23 @@ public sealed class UIReaderService : IDisposable
     private unsafe void AnnounceLateFilledList(string name, AtkUnitBase* addon, AtkComponentList* list)
     {
         if (!_emptyListSince.TryGetValue(name, out var since)) return;
+        // ActionMenu: siehe OnAnyAddonOpen — keine Listen-Ansage.
+        if (name == "ActionMenu")
+        {
+            _emptyListSince.Remove(name);
+            return;
+        }
 
         var count = GetListEntryCount(list);
         if (count <= 0)
         {
+            // Marktbrett (ItemSearch): leere Ergebnisliste bleibt oft dauerhaft
+            // leer, solange nur Kategorien/Suchfeld bedient werden (Dump id=139
+            // ListLen=0; Log 2026-09-15 21:41:17/50 "Keine Einträge" war falsch
+            // und uebertoente die Fokusansagen der Kategorien). Weiter warten
+            // auf Treffer — nie "Keine Einträge" hier.
+            if (name == "ItemSearch") return;
+
             if ((DateTime.UtcNow - since).TotalSeconds < EmptyListWaitS) return;
             _emptyListSince.Remove(name);
             _log.Info($"[Accessibility] {name}: Liste bleibt leer.");
@@ -1396,6 +1470,10 @@ public sealed class UIReaderService : IDisposable
             }
         }
 
+        // Charakterauswahl: Detail-Panel-Felder nachziehen (Name + Job + Ort).
+        if (name == "_CharaSelectListMenu")
+            TickCharaSelectAnnounce();
+
         // 5. Generischer Text-Scanner (f�r �nderungen im Addon-Inhalt)
         if (_noListCache.Contains(name) && !IsSuppressedAddon(name))
         {
@@ -1507,8 +1585,15 @@ public sealed class UIReaderService : IDisposable
         var key  = ((AtkResNode*)match)->NodeId;
         if (string.IsNullOrWhiteSpace(text))
         {
-            _log.Info($"[Accessibility] {addonName}: component matched (node id={key}) but has no text.");
-            return false;
+            // Icon-only slots (BuddySkill Kunststücke, BuddyAction Kommandos):
+            // Log 2026-09-10 — ButtonClick matches node id=6 with no text; the
+            // game still bound an Action/Text tooltip at build time.
+            text = ResolveBuddyIconLabel((AtkResNode*)match);
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                _log.Info($"[Accessibility] {addonName}: component matched (node id={key}) but has no text.");
+                return false;
+            }
         }
 
         if (_lastFocusByAddon.TryGetValue(addonName, out var last) && key == last.Key && text == last.Text)
@@ -2377,6 +2462,214 @@ public sealed class UIReaderService : IDisposable
         return string.Empty;
     }
 
+    // -- Buddy (Mitstreiter / Begleit-Chocobo) -------------------------
+
+    private bool _buddySummarySpoken;
+    private int  _lastBuddyTabIndex = -1;
+    private string _lastBuddyTabLabel = string.Empty;
+
+    /// <summary>
+    /// True while the Mitstreiter (<c>Buddy</c>) window is open and drawn.
+    /// The mod key uses this to choose between open and re-read.
+    /// </summary>
+    public unsafe bool IsCompanionWindowOpen
+    {
+        get
+        {
+            var ptr = _gameGui.GetAddonByName("Buddy");
+            return !ptr.IsNull && ((AtkUnitBase*)(nint)ptr)->IsVisible;
+        }
+    }
+
+    /// <summary>
+    /// On-demand re-read of the open Mitstreiter window (mod key). Uses the
+    /// same summary path as the automatic open announcement.
+    /// </summary>
+    public unsafe void AnnounceCompanionWindow()
+    {
+        var ptr = _gameGui.GetAddonByName("Buddy");
+        if (ptr.IsNull)
+        {
+            _tolk.SpeakInterrupt(AccessibilityStrings.CompanionWindowEmpty);
+            return;
+        }
+
+        var addon = (AtkUnitBase*)(nint)ptr;
+        if (!addon->IsVisible)
+        {
+            _tolk.SpeakInterrupt(AccessibilityStrings.CompanionWindowEmpty);
+            return;
+        }
+
+        var buddy = (AddonBuddy*)addon;
+        var tabLabel = ReadBuddyTabLabel(buddy, buddy->TabIndex);
+        var summary = BuildBuddyWindowSummary(addon, tabLabel);
+        if (string.IsNullOrWhiteSpace(summary))
+        {
+            _tolk.SpeakInterrupt(AccessibilityStrings.CompanionWindowEmpty);
+            return;
+        }
+
+        _buddySummarySpoken = true;
+        _lastBuddyTabIndex = buddy->TabIndex;
+        _lastBuddyTabLabel = tabLabel;
+        _log.Info($"[Buddy] Taste: '{summary}'");
+        _tolk.SpeakInterrupt(summary);
+        _history.Add(MessageHistoryService.SystemKey, summary);
+    }
+
+    /// <summary>
+    /// Mitstreiter window: one open summary (name, rank/XP, HP, summon time,
+    /// active tab) and interrupt on radio-tab switches. Data from
+    /// <see cref="ChocoboCompanionReading"/> + <c>BuddyNumberArray</c> while the
+    /// window is open (array is fresh then — dump 2026-09-10). Tabs via
+    /// <c>AddonBuddy.TabIndex</c> / checked radio label (ClientStructs).
+    /// </summary>
+    private unsafe void OnBuddyUpdate(AddonEvent type, AddonArgs args)
+    {
+        var addon = (AtkUnitBase*)(nint)args.Addon;
+        if (addon == null || !addon->IsVisible)
+        {
+            _buddySummarySpoken = false;
+            _lastBuddyTabIndex = -1;
+            _lastBuddyTabLabel = string.Empty;
+            return;
+        }
+
+        var buddy = (AddonBuddy*)addon;
+        var tabIndex = buddy->TabIndex;
+        var tabLabel = ReadBuddyTabLabel(buddy, tabIndex);
+
+        if (!_buddySummarySpoken)
+        {
+            var summary = BuildBuddyWindowSummary(addon, tabLabel);
+            if (string.IsNullOrWhiteSpace(summary)) return; // not ready yet
+
+            _buddySummarySpoken = true;
+            _lastBuddyTabIndex = tabIndex;
+            _lastBuddyTabLabel = tabLabel;
+            _log.Info($"[Buddy] Oeffnung: '{summary}'");
+            _tolk.SpeakInterrupt(summary);
+            _history.Add(MessageHistoryService.SystemKey, summary);
+            return;
+        }
+
+        if (tabIndex == _lastBuddyTabIndex && tabLabel == _lastBuddyTabLabel)
+            return;
+        if (string.IsNullOrWhiteSpace(tabLabel)) return;
+
+        _lastBuddyTabIndex = tabIndex;
+        _lastBuddyTabLabel = tabLabel;
+        _log.Info($"[Buddy] Reiter: '{tabLabel}' (index={tabIndex})");
+        _tolk.SpeakInterrupt(tabLabel);
+    }
+
+    /// <summary>
+    /// One spoken sentence for the open Mitstreiter window, or empty if the
+    /// companion / painted numbers are not ready yet.
+    /// </summary>
+    private unsafe string BuildBuddyWindowSummary(AtkUnitBase* addon, string tabLabel)
+    {
+        var title = ReadWindowTitle(addon);
+        if (string.IsNullOrWhiteSpace(title))
+            title = AccessibilityStrings.BuddyWindowTitleFallback;
+
+        var snap = ChocoboCompanionReading.Read(_data, _log);
+        if (snap.Rank <= 0 && string.IsNullOrWhiteSpace(snap.Name))
+            return AccessibilityStrings.BuddyWindowNoCompanion(title);
+
+        // While Buddy is visible the number array matches the painted bars
+        // (dump 2026-09-10: LP 799/799, Zeit 24:23 / 60:00). Prefer it for HP
+        // and summon time; fall back to omitting those parts if still zero.
+        var num = BuddyNumberArray.Instance();
+        int hpCur = 0, hpMax = 0, timeCur = 0, timeMax = 0;
+        if (num != null)
+        {
+            hpCur = num->CurrentHP;
+            hpMax = num->MaxHP;
+            timeCur = num->RemaningSummonTime;
+            timeMax = num->MaxSummonTime;
+        }
+
+        // Wait one more frame if rank is set but bars still empty (first paint).
+        if (snap.Rank > 0 && hpMax <= 0 && timeMax <= 0 && !snap.ArrayFresh)
+            return string.Empty;
+
+        var rankPart = FormatBuddyRankPart(snap);
+        var name = string.IsNullOrWhiteSpace(snap.Name)
+            ? string.Empty
+            : TolkService.Sanitize(snap.Name).Trim();
+
+        var ui = FFXIVClientStructs.FFXIV.Client.Game.UI.UIState.Instance();
+        int skillPoints = ui != null ? ui->Buddy.CompanionInfo.SkillPoints : 0;
+
+        return AccessibilityStrings.BuddyWindowSummary(
+            title,
+            name,
+            rankPart,
+            hpCur,
+            hpMax,
+            timeCur,
+            timeMax,
+            skillPoints,
+            tabLabel);
+    }
+
+    /// <summary>Rank / XP clause shared wording with the chocobo hotkey.</summary>
+    private static string FormatBuddyRankPart(ChocoboCompanionReading.Snapshot snap)
+    {
+        var starText = snap.Stars > 0 ? AccessibilityStrings.ChocoboStars(snap.Stars) : string.Empty;
+        if (snap.NeededXp == 0)
+            return AccessibilityStrings.ChocoboRankMax(snap.Rank) + starText;
+        if (snap.NeededXp > 0)
+        {
+            var left = snap.NeededXp > snap.CurrentXp ? snap.NeededXp - snap.CurrentXp : 0;
+            return AccessibilityStrings.ChocoboRankExpLeft(snap.Rank, left) + starText;
+        }
+        if (snap.Rank > 0)
+            return AccessibilityStrings.ChocoboRankExpOnly(snap.Rank, snap.CurrentXp) + starText;
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// Label of the active Mitstreiter tab from the checked radio, else the
+    /// radio at <paramref name="tabIndex"/>, else empty.
+    /// </summary>
+    private static unsafe string ReadBuddyTabLabel(AddonBuddy* buddy, int tabIndex)
+    {
+        var radios = buddy->RadioButtons;
+        for (var i = 0; i < radios.Length; i++)
+        {
+            var rb = radios[i].Value;
+            if (rb == null) continue;
+            if (!rb->AtkComponentButton.IsChecked) continue;
+            var textNode = rb->AtkComponentButton.ButtonTextNode;
+            var label = textNode != null
+                ? TolkService.Sanitize(AtkText.Read(textNode)).Trim()
+                : string.Empty;
+            if (!string.IsNullOrWhiteSpace(label)) return label;
+            label = TolkService.Sanitize(ReadComponentTextById((AtkComponentBase*)rb, 2)).Trim();
+            if (!string.IsNullOrWhiteSpace(label)) return label;
+        }
+
+        if (tabIndex >= 0 && tabIndex < radios.Length)
+        {
+            var rb = radios[tabIndex].Value;
+            if (rb != null)
+            {
+                var textNode = rb->AtkComponentButton.ButtonTextNode;
+                var label = textNode != null
+                    ? TolkService.Sanitize(AtkText.Read(textNode)).Trim()
+                    : string.Empty;
+                if (!string.IsNullOrWhiteSpace(label)) return label;
+                label = TolkService.Sanitize(ReadComponentTextById((AtkComponentBase*)rb, 2)).Trim();
+                if (!string.IsNullOrWhiteSpace(label)) return label;
+            }
+        }
+
+        return string.Empty;
+    }
+
     // -- MountNoteBook: Ansichts-Reiter + Seite -----------------------
 
     // Last announced view/page, so a switch speaks once. -1 = nothing yet.
@@ -2557,6 +2850,22 @@ public sealed class UIReaderService : IDisposable
     private long _actionDwellTick;        // Stopwatch timestamp the focus reached it
     private bool _actionDwellDescSpoken;  // description already queued for this dwell?
     private const double ActionDescDwellSeconds = 0.4;
+    // Traits without an Action-tooltip binding (Log 2026-09-14 Eigenschaften):
+    // dwell keyed by panel name; description comes from the ActionDetail addon.
+    private string _actionDetailDwellKey = string.Empty;
+    // When the ActionDetail panel still shows the previous trait, wait a few
+    // frames rather than attaching the wrong "St. N" (same idea as item defer).
+    private nint _actionDetailDeferNode;
+    private int  _actionDetailDeferFrames;
+    private const int ActionDetailDeferMaxFrames = 8;
+
+    // Charakterauswahl: Detail-Panel aktualisiert sich ~15 ms nach der List-Nav
+    // (Log 2026-09-14 16:30). Pending Name warten, bis _CharaSelectInfo den
+    // gleichen Namen zeigt, dann Job+Ort aus _CharaSelectDetail anhaengen.
+    private string _charaSelectPendingName = string.Empty;
+    private int    _charaSelectDeferFrames;
+    private string _charaSelectLastSpoken = string.Empty;
+    private const int CharaSelectDeferMaxFrames = 8;
 
     // Zauberbuch der Blaumagie: gleiche Aufteilung wie beim Skill-Fenster. Name
     // und Nummer kommen sofort, die langen Werte und die Beschreibung erst, wenn
@@ -2861,12 +3170,24 @@ public sealed class UIReaderService : IDisposable
             // nachgeschlagen wuerde.
             text = aozRow;
         }
-        else if (TryReadActionMenuFocusRow(node, out var actionRow))
+        else if (TryReadBuddySkillFocusRow(node, out var buddySkillRow))
+        {
+            // Mitstreiter Kunststücke/Kommandos: Skill-Icons tragen keinen Text
+            // (Log 2026-09-10 BuddySkill: "component matched ... but has no text";
+            // Fokus las sonst nur "10, STUFE 0, Angreifer" aus dem Baum-Header).
+            // Name/Beschreibung kommen aus der Tooltip-Action-Bindung — gleiches
+            // Muster wie ActionMenu.
+            text = buddySkillRow;
+        }
+        else if (TryReadActionMenuFocusRow(node, out var actionRow, out var actionDefer))
         {
             // Skill window (Aktionen & Talente): the list rows are icon-only,
             // so name/level/description come from the game's own action-detail
             // agent, resolved through Lumina. Takes priority over the item
             // reader below (an action icon id must not be looked up as an item).
+            // Traits without a tooltip Action binding wait briefly for the
+            // ActionDetail panel (Log 2026-09-14) — same defer pattern as items.
+            if (actionDefer) return;
             text = actionRow;
         }
         else if (!string.IsNullOrEmpty(_lastFocusedItemName))
@@ -2949,10 +3270,11 @@ public sealed class UIReaderService : IDisposable
         if (DeepDungeonPanel != null)
             text = DeepDungeonPanel.NameSlot(node, text, FindAddonNameForNode(node));
 
-        // Deferred skill description: runs BEFORE the dedup return so it keeps
-        // ticking while the focus is parked on one skill (the dedup below would
-        // otherwise short-circuit every same-skill frame).
-        HandleActionMenuDwell(node);
+    // Deferred skill description: runs BEFORE the dedup return so it keeps
+    // ticking while the focus is parked on one skill (the dedup below would
+    // otherwise short-circuit every same-skill frame).
+    HandleActionMenuDwell(node);
+    HandleBuddySkillDwell(node);
 
         // Zauberbuch der Blaumagie: gleiche Stelle und derselbe Grund - vor dem
         // Dedup, damit die Uhr weiterlaeuft, waehrend der Fokus auf einer Kachel
@@ -4974,40 +5296,191 @@ public sealed class UIReaderService : IDisposable
     /// </summary>
     private unsafe void HandleActionMenuDwell(AtkResNode* node)
     {
-        if (!IsAddonVisible("ActionMenu") || !FocusIsActionSlot(node))
+        // BuddySkill/BuddyAction use Text tooltips (no Action binding) — see
+        // HandleBuddySkillDwell. Only the real skill window uses Action ids here.
+        var inActionMenu = IsAddonVisible("ActionMenu") && FocusIsActionSlot(node);
+        if (!inActionMenu)
         {
             _actionDwellId = 0;
+            _actionDetailDwellKey = string.Empty;
             return;
         }
 
         // Same source as TryReadActionMenuFocusRow: the slot's tooltip binding,
         // which (unlike AgentActionDetail) survives keyboard focus.
-        var action = _tooltips.TryGetActionDeep(node);
-        if (action == null)
+        var action = _tooltips.TryGetActionDeep(node, maxDepth: 6) ?? TryFindActionBindingNear(node);
+        if (action != null)
         {
-            _actionDwellId = 0;
+            _actionDetailDwellKey = string.Empty;
+            var id = action.Value.Id;
+
+            if (id != _actionDwellId)
+            {
+                // Focus just reached this skill (its name is being spoken this same
+                // frame) - start the clock, description not yet due.
+                _actionDwellId         = id;
+                _actionDwellTick       = System.Diagnostics.Stopwatch.GetTimestamp();
+                _actionDwellDescSpoken = false;
+                return;
+            }
+
+            if (_actionDwellDescSpoken) return;
+            var elapsed = (double)(System.Diagnostics.Stopwatch.GetTimestamp() - _actionDwellTick)
+                          / System.Diagnostics.Stopwatch.Frequency;
+            if (elapsed < ActionDescDwellSeconds) return;
+
+            _actionDwellDescSpoken = true; // one-shot per dwell, even if desc is empty
+            var desc = ActionMenuDescription(action.Value.Kind, id);
+            // Traits have no ActionTransient text — take the panel description
+            // the scanner used to spam (Log 2026-09-14, muted in HudNoiseAddons).
+            if (string.IsNullOrEmpty(desc) && TryReadActionDetailPanel(out _, out _, out var panelDesc))
+                desc = panelDesc;
+            if (!string.IsNullOrEmpty(desc)) _tolk.Speak(desc);
             return;
         }
-        var id = action.Value.Id;
 
-        if (id != _actionDwellId)
+        // Unbound traits: dwell on the ActionDetail panel name/description.
+        _actionDwellId = 0;
+        if (!TryReadActionDetailPanel(out var panelName, out _, out var unboundDesc)
+            || string.IsNullOrWhiteSpace(panelName))
         {
-            // Focus just reached this skill (its name is being spoken this same
-            // frame) - start the clock, description not yet due.
-            _actionDwellId         = id;
+            _actionDetailDwellKey = string.Empty;
+            return;
+        }
+
+        if (!ActionDetailNamesMatch(panelName, GetActionMenuSlotLabel(node)))
+        {
+            _actionDetailDwellKey = string.Empty;
+            return;
+        }
+
+        if (panelName != _actionDetailDwellKey)
+        {
+            _actionDetailDwellKey  = panelName;
             _actionDwellTick       = System.Diagnostics.Stopwatch.GetTimestamp();
             _actionDwellDescSpoken = false;
             return;
         }
 
         if (_actionDwellDescSpoken) return;
-        var elapsed = (double)(System.Diagnostics.Stopwatch.GetTimestamp() - _actionDwellTick)
+        var elapsedU = (double)(System.Diagnostics.Stopwatch.GetTimestamp() - _actionDwellTick)
+                       / System.Diagnostics.Stopwatch.Frequency;
+        if (elapsedU < ActionDescDwellSeconds) return;
+
+        _actionDwellDescSpoken = true;
+        if (!string.IsNullOrEmpty(unboundDesc)) _tolk.Speak(unboundDesc);
+    }
+
+    // Mitstreiter Kunststücke: Text-Tooltip name → BuddyAction sheet description.
+    // Log 2026-09-10 11:45: every frame "Skill via Text-Tooltip: 'Chocobo-Faller'"
+    // with NO Action binding, so HandleActionMenuDwell never started.
+    private string _buddySkillDwellName = string.Empty;
+    private long   _buddySkillDwellTick;
+    private bool   _buddySkillDescSpoken;
+    private string _lastBuddySkillLogged = string.Empty;
+
+    /// <summary>
+    /// After the skill name was spoken, queue the BuddyAction-sheet description
+    /// once the focus dwells — same timing as the skill window.
+    /// </summary>
+    private unsafe void HandleBuddySkillDwell(AtkResNode* node)
+    {
+        var owner = FindAddonNameForNode(node);
+        if (owner is not ("BuddySkill" or "BuddyAction")
+            || !string.IsNullOrEmpty(_lastFocusedItemName))
+        {
+            _buddySkillDwellName = string.Empty;
+            return;
+        }
+
+        // Action-bound slots (rare here): reuse ActionTransient like ActionMenu.
+        var action = _tooltips.TryGetActionDeep(node);
+        if (action != null)
+        {
+            var key = $"A:{action.Value.Kind}:{action.Value.Id}";
+            if (key != _buddySkillDwellName)
+            {
+                _buddySkillDwellName   = key;
+                _buddySkillDwellTick   = System.Diagnostics.Stopwatch.GetTimestamp();
+                _buddySkillDescSpoken  = false;
+                return;
+            }
+            if (_buddySkillDescSpoken) return;
+            var elapsedA = (double)(System.Diagnostics.Stopwatch.GetTimestamp() - _buddySkillDwellTick)
+                           / System.Diagnostics.Stopwatch.Frequency;
+            if (elapsedA < ActionDescDwellSeconds) return;
+            _buddySkillDescSpoken = true;
+            var descA = ActionMenuDescription(action.Value.Kind, action.Value.Id);
+            if (!string.IsNullOrEmpty(descA))
+            {
+                _log.Info($"[Buddy] Beschreibung (Action) id={action.Value.Id}: '{descA}'");
+                _tolk.Speak(descA);
+            }
+            return;
+        }
+
+        var tip = _tooltips.TryGetTooltipDeep(node)?.Trim() ?? string.Empty;
+        if (tip.Length == 0)
+        {
+            _buddySkillDwellName = string.Empty;
+            return;
+        }
+
+        if (tip != _buddySkillDwellName)
+        {
+            _buddySkillDwellName  = tip;
+            _buddySkillDwellTick  = System.Diagnostics.Stopwatch.GetTimestamp();
+            _buddySkillDescSpoken = false;
+            return;
+        }
+
+        if (_buddySkillDescSpoken) return;
+        var elapsed = (double)(System.Diagnostics.Stopwatch.GetTimestamp() - _buddySkillDwellTick)
                       / System.Diagnostics.Stopwatch.Frequency;
         if (elapsed < ActionDescDwellSeconds) return;
 
-        _actionDwellDescSpoken = true; // one-shot per dwell, even if desc is empty
-        var desc = ActionMenuDescription(action.Value.Kind, id);
-        if (!string.IsNullOrEmpty(desc)) _tolk.Speak(desc);
+        _buddySkillDescSpoken = true;
+        var desc = LookupBuddyActionDescription(tip);
+        if (string.IsNullOrEmpty(desc))
+        {
+            _log.Info($"[Buddy] Keine Beschreibung im BuddyAction-Sheet fuer '{tip}'.");
+            return;
+        }
+        _log.Info($"[Buddy] Beschreibung (BuddyAction): '{tip}' -> '{desc}'");
+        _tolk.Speak(desc);
+    }
+
+    /// <summary>
+    /// Description text from the BuddyAction sheet row whose Name matches
+    /// <paramref name="skillName"/> (game language). Empty when no row matches.
+    /// </summary>
+    private string LookupBuddyActionDescription(string skillName)
+    {
+        var sheet = _data.GetExcelSheet<Lumina.Excel.Sheets.BuddyAction>();
+        if (sheet == null) return string.Empty;
+
+        var needle = skillName.Trim();
+        foreach (var row in sheet)
+        {
+            var name = row.Name.ExtractText().Trim();
+            if (!string.Equals(name, needle, StringComparison.OrdinalIgnoreCase))
+                continue;
+            return FlattenDescription(row.Description.ExtractText());
+        }
+
+        // Fallback: Action sheet by name → ActionTransient (same wording as skill window).
+        var actions = _data.GetExcelSheet<LuminaAction>();
+        if (actions == null) return string.Empty;
+        foreach (var row in actions)
+        {
+            var name = row.Name.ExtractText().Trim();
+            if (!string.Equals(name, needle, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (_data.GetExcelSheet<LuminaActionTransient>()?.TryGetRow(row.RowId, out var trans) == true)
+                return FlattenDescription(trans.Description.ExtractText());
+            return string.Empty;
+        }
+        return string.Empty;
     }
 
     /// <summary>
@@ -5133,9 +5606,10 @@ public sealed class UIReaderService : IDisposable
         return FlattenDescription(string.Join(" ", parts));
     }
 
-    private unsafe bool TryReadActionMenuFocusRow(AtkResNode* node, out string text)
+    private unsafe bool TryReadActionMenuFocusRow(AtkResNode* node, out string text, out bool defer)
     {
         text = string.Empty;
+        defer = false;
         if (!IsAddonVisible("ActionMenu")) return false;
 
         if (!FocusIsActionSlot(node)) return false;
@@ -5145,19 +5619,334 @@ public sealed class UIReaderService : IDisposable
         // keyboard focus (regression proven via [ActionMenuProbe], 2026-07-31 -
         // agentId=0 on every DragDrop focus), while the tooltip binding is made
         // when the addon is built and is present for keyboard focus too.
-        var action = _tooltips.TryGetActionDeep(node);
-        if (action == null) return false;
-        var kind = action.Value.Kind;
-        var id   = action.Value.Id;
+        // Depth 6: trait rows sometimes bind a child deeper than the default 3
+        // (Eigenschaften, Log 2026-09-14: name-only until ActionDetail caught up).
+        var action = _tooltips.TryGetActionDeep(node, maxDepth: 6);
+        if (action == null)
+            action = TryFindActionBindingNear(node);
+        if (action != null)
+        {
+            var kind = action.Value.Kind;
+            var id   = action.Value.Id;
 
-        var info = DescribeActionDetail(kind, id);
-        if (string.IsNullOrEmpty(info)) return false;
+            var info = DescribeActionDetail(kind, id);
+            if (string.IsNullOrEmpty(info)) return false;
 
 #if DEBUG
-        _log.Info($"[ActionDetail] node id={node->NodeId} kind={kind} id={id} -> '{info}'");
+            _log.Info($"[ActionDetail] node id={node->NodeId} kind={kind} id={id} -> '{info}'");
 #endif
-        text = info;
+            _actionDetailDeferNode = 0;
+            _actionDetailDeferFrames = 0;
+            text = info;
+            return true;
+        }
+
+        // Traits without an Action tooltip: Name+Stufe from the ActionDetail
+        // panel (nodes id=5 / id=26, Log 2026-09-14). Wait until the panel
+        // matches this row so we do not attach the previous trait's level.
+        var slotLabel = GetActionMenuSlotLabel(node);
+        if (TryReadActionDetailPanel(out var panelName, out var panelLevel, out _)
+            && !string.IsNullOrWhiteSpace(panelName)
+            && (string.IsNullOrWhiteSpace(slotLabel) || ActionDetailNamesMatch(panelName, slotLabel)))
+        {
+            _actionDetailDeferNode = 0;
+            _actionDetailDeferFrames = 0;
+            text = panelLevel > 0
+                ? AccessibilityStrings.NameWithLevel(panelName, panelLevel)
+                : panelName;
+            _log.Info($"[ActionDetail] Panel-Fallback node id={node->NodeId} -> '{text}'");
+            return true;
+        }
+
+        if ((nint)node != _actionDetailDeferNode)
+        {
+            _actionDetailDeferNode   = (nint)node;
+            _actionDetailDeferFrames = 0;
+        }
+
+        if (_actionDetailDeferFrames < ActionDetailDeferMaxFrames)
+        {
+            _actionDetailDeferFrames++;
+            defer = true;
+            return true;
+        }
+
+        // Panel never matched — speak the row label alone rather than stay silent.
+        _actionDetailDeferNode = 0;
+        _actionDetailDeferFrames = 0;
+        if (string.IsNullOrWhiteSpace(slotLabel)) return false;
+        text = slotLabel;
         return true;
+    }
+
+    /// <summary>
+    /// Visible ActionDetail tooltip fields used when the skill-window slot has
+    /// no Action tooltip binding (traits). Node ids from Log 2026-09-14:
+    /// name=5, description=19, level=26 ("St. N"); id=29 is job abbreviations
+    /// and must not be spoken.
+    /// </summary>
+    private unsafe bool TryReadActionDetailPanel(out string name, out int level, out string description)
+    {
+        name = string.Empty;
+        level = 0;
+        description = string.Empty;
+
+        var ptr = _gameGui.GetAddonByName("ActionDetail");
+        if (ptr.IsNull) return false;
+        var addon = (AtkUnitBase*)(nint)ptr;
+        if (addon == null || !addon->IsVisible) return false;
+
+        name = FlattenDescription(ReadAddonNodeText(addon, 5));
+        description = FlattenDescription(ReadAddonNodeText(addon, 19));
+        level = ParseActionDetailLevel(ReadAddonNodeText(addon, 26));
+        return name.Length > 0 || level > 0 || description.Length > 0;
+    }
+
+    /// <summary>Plain text of one ActionDetail text node by id (Log: 5/19/26).</summary>
+    private static unsafe string ReadAddonNodeText(AtkUnitBase* addon, uint nodeId)
+    {
+        var n = FindTopLevelNode(addon, nodeId);
+        if (n != null && n->Type == NodeType.Text && n->IsVisible())
+            return AtkText.Read((AtkTextNode*)n).Trim();
+
+        for (var i = 0; i < addon->UldManager.NodeListCount; i++)
+        {
+            var wrap = addon->UldManager.NodeList[i];
+            if (wrap == null || (int)wrap->Type < 1000) continue;
+            var comp = ((AtkComponentNode*)wrap)->Component;
+            if (comp == null) continue;
+            for (var j = 0; j < comp->UldManager.NodeListCount; j++)
+            {
+                var child = comp->UldManager.NodeList[j];
+                if (child == null || child->Type != NodeType.Text || !child->IsVisible()) continue;
+                if (child->NodeId != nodeId) continue;
+                return AtkText.Read((AtkTextNode*)child).Trim();
+            }
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// Visible text of a component child identified by parent node id and child
+    /// text-node id (scanner key = parent×10000 + child).
+    /// </summary>
+    private static unsafe string ReadAddonComponentText(AtkUnitBase* addon, uint parentNodeId, uint childNodeId)
+    {
+        for (var i = 0; i < addon->UldManager.NodeListCount; i++)
+        {
+            var wrap = addon->UldManager.NodeList[i];
+            if (wrap == null || wrap->NodeId != parentNodeId || (int)wrap->Type < 1000) continue;
+            var comp = ((AtkComponentNode*)wrap)->Component;
+            if (comp == null) continue;
+            for (var j = 0; j < comp->UldManager.NodeListCount; j++)
+            {
+                var child = comp->UldManager.NodeList[j];
+                if (child == null || child->NodeId != childNodeId) continue;
+                if (child->Type != NodeType.Text || !child->IsVisible()) continue;
+                return AtkText.Read((AtkTextNode*)child).Trim();
+            }
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// Queues Name + Job/Stufe + Ort for the character-select list. The detail
+    /// panel lags the list by ~15 ms (Log 2026-09-14 16:30), so speaking waits
+    /// for <see cref="TickCharaSelectAnnounce"/>.
+    /// </summary>
+    private void BeginCharaSelectAnnounce(string characterName)
+    {
+        _charaSelectPendingName = characterName;
+        _charaSelectDeferFrames = 0;
+    }
+
+    /// <summary>
+    /// Speaks one line once <c>_CharaSelectInfo</c> shows the pending name, or
+    /// name alone after <see cref="CharaSelectDeferMaxFrames"/>.
+    /// </summary>
+    private unsafe void TickCharaSelectAnnounce()
+    {
+        if (string.IsNullOrEmpty(_charaSelectPendingName)) return;
+
+        _charaSelectDeferFrames++;
+
+        var infoName = ReadCharaSelectInfoName();
+        var ready = infoName.Length > 0
+                    && infoName.Equals(_charaSelectPendingName, StringComparison.OrdinalIgnoreCase);
+
+        if (!ready && _charaSelectDeferFrames < CharaSelectDeferMaxFrames)
+            return;
+
+        var parts = new List<string> { _charaSelectPendingName };
+        if (ready && TryReadCharaSelectSummary(out var jobLevel, out var place))
+        {
+            if (!string.IsNullOrWhiteSpace(jobLevel)) parts.Add(jobLevel);
+            if (!string.IsNullOrWhiteSpace(place)) parts.Add(place);
+        }
+
+        var spoken = string.Join(", ", parts);
+        _charaSelectPendingName = string.Empty;
+        _charaSelectDeferFrames = 0;
+
+        if (spoken == _charaSelectLastSpoken) return;
+        _charaSelectLastSpoken = spoken;
+        _log.Info($"[Accessibility] _CharaSelectListMenu Zusammenfassung: {spoken}");
+        _tolk.SpeakInterrupt(spoken);
+    }
+
+    /// <summary>
+    /// Job/Stufe (comp 6 / text 4 → key 60004) and last location (comp 7 /
+    /// text 5 → key 70005) from <c>_CharaSelectDetail</c> (Log 2026-09-14).
+    /// </summary>
+    private unsafe bool TryReadCharaSelectSummary(out string jobLevel, out string place)
+    {
+        jobLevel = string.Empty;
+        place = string.Empty;
+
+        var ptr = _gameGui.GetAddonByName("_CharaSelectDetail");
+        if (ptr.IsNull) return false;
+        var addon = (AtkUnitBase*)(nint)ptr;
+        if (addon == null || !addon->IsVisible) return false;
+
+        jobLevel = ReadAddonComponentText(addon, 6, 4);
+        place = ReadAddonComponentText(addon, 7, 5);
+        return jobLevel.Length > 0 || place.Length > 0;
+    }
+
+    /// <summary>Name on <c>_CharaSelectInfo</c> text node id=3 (Log 2026-09-14).</summary>
+    private unsafe string ReadCharaSelectInfoName()
+    {
+        var ptr = _gameGui.GetAddonByName("_CharaSelectInfo");
+        if (ptr.IsNull) return string.Empty;
+        var addon = (AtkUnitBase*)(nint)ptr;
+        if (addon == null || !addon->IsVisible) return string.Empty;
+        return ReadAddonNodeText(addon, 3);
+    }
+
+    /// <summary>Parses "St. 74" / "Lv. 74" / "Level 74" from ActionDetail.</summary>
+    private static int ParseActionDetailLevel(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return 0;
+        var s = FlattenDescription(raw);
+        for (var i = 0; i < s.Length; i++)
+        {
+            if (!char.IsDigit(s[i])) continue;
+            var end = i;
+            while (end < s.Length && char.IsDigit(s[end])) end++;
+            if (int.TryParse(s.AsSpan(i, end - i), out var n) && n > 0 && n < 1000)
+                return n;
+            i = end;
+        }
+        return 0;
+    }
+
+    /// <summary>Row label from the focused ActionMenu slot (SeString cleaned).</summary>
+    private unsafe string GetActionMenuSlotLabel(AtkResNode* node)
+    {
+        var text = GetTextFromNodeTree(node);
+        var cur = node;
+        for (var up = 0; string.IsNullOrEmpty(text) && up < 3 && cur->ParentNode != null; up++)
+        {
+            cur = cur->ParentNode;
+            text = GetTextFromNodeTree(cur);
+        }
+        return FlattenDescription(text);
+    }
+
+    private static bool ActionDetailNamesMatch(string panelName, string slotLabel)
+    {
+        if (string.IsNullOrWhiteSpace(panelName) || string.IsNullOrWhiteSpace(slotLabel))
+            return false;
+        var a = FlattenDescription(panelName);
+        var b = FlattenDescription(slotLabel);
+        return a.Equals(b, StringComparison.OrdinalIgnoreCase)
+               || a.Contains(b, StringComparison.OrdinalIgnoreCase)
+               || b.Contains(a, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Action tooltip on a child of the focused slot component (traits often
+    /// bind the icon child, not the DragDrop the keyboard focus sits on).
+    /// </summary>
+    private unsafe TooltipService.ActionRef? TryFindActionBindingNear(AtkResNode* node)
+    {
+        var cur = node;
+        for (var up = 0; up < 4 && cur != null; up++, cur = cur->ParentNode)
+        {
+            if ((int)cur->Type < 1000) continue;
+            var comp = ((AtkComponentNode*)cur)->Component;
+            if (comp == null) continue;
+            for (var j = 0; j < comp->UldManager.NodeListCount; j++)
+            {
+                var child = comp->UldManager.NodeList[j];
+                if (child == null) continue;
+                var a = _tooltips.TryGetActionDeep(child, maxDepth: 2);
+                if (a != null) return a;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Mitstreiter Kunststücke (<c>BuddySkill</c>) and Kommandos (<c>BuddyAction</c>):
+    /// skill icons are textless (Log 2026-09-10: ButtonClick node id=6, "has no
+    /// text"). Resolve name via the game's tooltip Action binding or text tip —
+    /// same source as the skill window. Returns false for role-tree headers so
+    /// the generic reader still speaks "STUFE 0, Angreifer". Skips item/feed
+    /// slots already named by the inventory reader (Gizar-Blatt etc.).
+    /// </summary>
+    private unsafe bool TryReadBuddySkillFocusRow(AtkResNode* node, out string text)
+    {
+        text = string.Empty;
+        var owner = FindAddonNameForNode(node);
+        if (owner is not ("BuddySkill" or "BuddyAction")) return false;
+
+        // BuddyAction also hosts feed items; those keep the item announcement.
+        if (!string.IsNullOrEmpty(_lastFocusedItemName)) return false;
+
+        var label = ResolveBuddyIconLabel(node);
+        if (string.IsNullOrWhiteSpace(label)) return false;
+        text = label;
+        return true;
+    }
+
+    /// <summary>
+    /// Action name (and level when known) or plain tooltip text for a Mitstreiter
+    /// icon node; empty when the game bound neither.
+    /// </summary>
+    private unsafe string ResolveBuddyIconLabel(AtkResNode* node)
+    {
+        if (node == null) return string.Empty;
+
+        var action = _tooltips.TryGetActionDeep(node);
+        if (action != null)
+        {
+            var info = DescribeActionDetail(action.Value.Kind, action.Value.Id);
+            if (!string.IsNullOrWhiteSpace(info))
+            {
+                if (info != _lastBuddySkillLogged)
+                {
+                    _lastBuddySkillLogged = info;
+                    _log.Info($"[Buddy] Skill via Action-Tooltip: kind={action.Value.Kind} id={action.Value.Id} -> '{info}'");
+                }
+                return info;
+            }
+        }
+
+        var tip = _tooltips.TryGetTooltipDeep(node);
+        if (!string.IsNullOrWhiteSpace(tip))
+        {
+            if (tip != _lastBuddySkillLogged)
+            {
+                _lastBuddySkillLogged = tip;
+                _log.Info($"[Buddy] Skill via Text-Tooltip: '{tip}'");
+            }
+            return tip;
+        }
+
+        return string.Empty;
     }
 
     /// <summary>
@@ -8696,9 +9485,256 @@ public sealed class UIReaderService : IDisposable
         // keyboard focus alone never switches the page; user 2026-07-16).
         if (TryActivateFocusedConfigTab()) return;
 
+        // Marktbrett (ItemSearch): Fokus allein fuellt die Trefferliste nicht
+        // (Log 2026-09-15 21:48–49). Enter = Kategorie klicken bzw. RunSearch.
+        if (TryActivateFocusedItemSearch()) return;
+
         // Ok buttons in lobby / character creation (tribe screen, DC map,
         // name dialog, ...): dispatch the button's real click event.
         PressFocusedOk();
+    }
+
+    /// <summary>
+    /// Activates the focused ItemSearch (market board) control on Enter:
+    /// category RadioButton via its click event, or the Search button via
+    /// <c>AddonItemSearch.RunSearch</c>. Keyboard focus alone does not check a
+    /// category or fill ResultsList (dalamud.log 2026-09-15 21:48–49).
+    /// </summary>
+    private unsafe bool TryActivateFocusedItemSearch()
+    {
+        var ptr = _gameGui.GetAddonByName("ItemSearch");
+        if (ptr.IsNull) return false;
+        var addon = (AtkUnitBase*)(nint)ptr;
+        if (addon == null || !addon->IsVisible) return false;
+
+        var stage = AtkStage.Instance();
+        if (stage == null || stage->AtkInputManager == null) return false;
+        var focus = stage->AtkInputManager->FocusedNode;
+        if (focus == null) return false;
+
+        var owner = FindTopLevelOwner(addon, focus, out _);
+        if (owner != null && (int)owner->Type >= 1000)
+        {
+            var ownerComp = ((AtkComponentNode*)owner)->Component;
+            if (ownerComp != null && ownerComp->GetComponentType() == ComponentType.TextInput)
+                return false;
+        }
+
+        var search = (AddonItemSearch*)addon;
+        var radio = FindItemSearchRadioForFocus(addon, focus);
+        if (radio != null)
+        {
+            var label = ReadItemSearchCategoryLabel(radio, focus);
+            var registered = new List<string>();
+            AtkEvent* best = null;
+            var bestRank = int.MaxValue;
+            ScanClickCandidates(radio, registered, ref best, ref bestRank);
+            var comp = ((AtkComponentNode*)radio)->Component;
+            if (comp != null)
+            {
+                for (var j = 0; j < comp->UldManager.NodeListCount; j++)
+                {
+                    var child = comp->UldManager.NodeList[j];
+                    if (child != null) ScanClickCandidates(child, registered, ref best, ref bestRank);
+                }
+            }
+
+            _log.Info($"[ItemSearch] Kategorie: '{label}' Events=[{string.Join(", ", registered)}] " +
+                      $"Kandidat={(best != null ? best->State.EventType.ToString() : "KEINER")}");
+
+            if (best != null && best->Listener != null && IsReadable(best->Listener))
+            {
+                var data = default(AtkEventData);
+                best->Listener->ReceiveEvent(best->State.EventType, (int)best->Param, best, &data);
+            }
+            else
+            {
+                try
+                {
+                    search->RunSearch(ignoreFilters: false);
+                    _log.Info("[ItemSearch] Fallback RunSearch (kein Click-Event).");
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning($"[ItemSearch] RunSearch: {ex.Message}");
+                    _tolk.SpeakInterrupt(AccessibilityStrings.TabNotResponding);
+                    return true;
+                }
+            }
+
+            if (!_emptyListSince.ContainsKey("ItemSearch"))
+                _emptyListSince["ItemSearch"] = DateTime.UtcNow;
+
+            _tolk.SpeakInterrupt(label.Length > 0
+                ? AccessibilityStrings.MarketSearching(label)
+                : AccessibilityStrings.MarketSearchStarted);
+            return true;
+        }
+
+        if (IsItemSearchSearchButton(search, owner, focus))
+        {
+            try
+            {
+                search->RunSearch(ignoreFilters: false);
+                _log.Info("[ItemSearch] RunSearch (Suche-Button).");
+            }
+            catch (Exception ex)
+            {
+                _log.Warning($"[ItemSearch] RunSearch (Button): {ex.Message}");
+                if (owner == null || !DispatchClick(owner))
+                {
+                    _tolk.SpeakInterrupt(AccessibilityStrings.TabNotResponding);
+                    return true;
+                }
+            }
+
+            if (!_emptyListSince.ContainsKey("ItemSearch"))
+                _emptyListSince["ItemSearch"] = DateTime.UtcNow;
+            _tolk.SpeakInterrupt(AccessibilityStrings.MarketSearchStarted);
+            return true;
+        }
+
+        // Fokus sitzt oft auf dem Namens-Text (id=4), nicht im RadioButton-Baum
+        // (Log: Focus id=4 'Thaumaturgen-Waffe'). Dann FilterLabels + SetModeFilter.
+        var focusLabel = TolkService.Sanitize(GetTextFromNodeTree(focus)).Trim();
+        if (TryItemSearchByFilterLabel(search, focusLabel))
+            return true;
+
+        _log.Info($"[ItemSearch] Enter ohne Kategorie/Suche: Mode={search->Mode} " +
+                  $"SelFilter={search->SelectedFilter} focus='{focusLabel}' ownerId={(owner != null ? owner->NodeId : 0)}");
+        return false;
+    }
+
+    /// <summary>
+    /// Matches the focused label against <see cref="AddonItemSearch.FilterLabels"/>
+    /// and runs <c>SetModeFilter</c> + <c>RunSearch</c>. Used when focus is on the
+    /// spoken name node rather than inside the RadioButton component.
+    /// </summary>
+    private unsafe bool TryItemSearchByFilterLabel(AddonItemSearch* search, string label)
+    {
+        if (label.Length < 2) return false;
+        if (label.Equals("Suche", StringComparison.OrdinalIgnoreCase)
+            || label.Equals("Search", StringComparison.OrdinalIgnoreCase)
+            || label == "0/40"
+            || int.TryParse(label, out _))
+            return false;
+
+        try
+        {
+            var labels = search->FilterLabels;
+            var match = -1;
+            for (var i = 0; i < labels.Length; i++)
+            {
+                var s = TolkService.Sanitize(labels[i].ToString()).Trim();
+                if (s.Length == 0) continue;
+                if (s.Equals(label, StringComparison.OrdinalIgnoreCase))
+                {
+                    match = i;
+                    break;
+                }
+            }
+
+            if (match < 0)
+            {
+                _log.Info($"[ItemSearch] FilterLabel nicht gefunden: '{label}' (Mode={search->Mode})");
+                return false;
+            }
+
+            var mode = search->Mode;
+            // FilterLabels gehoeren zur aktuellen Mode-Fuellung. Unset/Normal:
+            // Waffe-Testfall des Users — ArmsFilter. Andere Sektionen: Mode ist
+            // nach Radio-Klick gesetzt; dieser Pfad ist nur Namens-Fokus-Fallback.
+            if (mode is AddonItemSearch.SearchMode.Unset or AddonItemSearch.SearchMode.Normal)
+                mode = AddonItemSearch.SearchMode.ArmsFilter;
+
+            search->SetModeFilter(mode, match);
+            search->RunSearch(ignoreFilters: false);
+            _log.Info($"[ItemSearch] SetModeFilter({mode}, {match}) + RunSearch für '{label}'");
+
+            if (!_emptyListSince.ContainsKey("ItemSearch"))
+                _emptyListSince["ItemSearch"] = DateTime.UtcNow;
+            _tolk.SpeakInterrupt(AccessibilityStrings.MarketSearching(label));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"[ItemSearch] FilterLabel-Suche: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Top-level RadioButton that contains <paramref name="focus"/>, or null.</summary>
+    private static unsafe AtkResNode* FindItemSearchRadioForFocus(AtkUnitBase* addon, AtkResNode* focus)
+    {
+        for (var i = 0; i < addon->UldManager.NodeListCount; i++)
+        {
+            var n = addon->UldManager.NodeList[i];
+            if (n == null || (int)n->Type < 1000) continue;
+            var comp = ((AtkComponentNode*)n)->Component;
+            if (comp == null || comp->GetComponentType() != ComponentType.RadioButton) continue;
+            if (n == focus || ComponentContainsNode(comp, focus, 0)) return n;
+        }
+        return null;
+    }
+
+    /// <summary>Best-effort category name for the spoken search line.</summary>
+    private unsafe string ReadItemSearchCategoryLabel(AtkResNode* radio, AtkResNode* focus)
+    {
+        var fromFocus = TolkService.Sanitize(GetTextFromNodeTree(focus)).Trim();
+        if (fromFocus.Length > 0
+            && !fromFocus.Equals("Suche", StringComparison.OrdinalIgnoreCase)
+            && fromFocus != "0/40")
+            return fromFocus;
+
+        if (radio != null)
+        {
+            var fromRadio = TolkService.Sanitize(GetTextFromNodeTree(radio)).Trim();
+            if (fromRadio.Length > 0) return fromRadio;
+            var comp = ((AtkComponentNode*)radio)->Component;
+            if (comp != null)
+            {
+                for (uint id = 2; id <= 5; id++)
+                {
+                    var byId = TolkService.Sanitize(ReadComponentTextById(comp, id)).Trim();
+                    if (byId.Length > 0) return byId;
+                }
+            }
+        }
+        return string.Empty;
+    }
+
+    /// <summary>True when focus is the ItemSearch Search button (id 145 / SearchButton).</summary>
+    private unsafe bool IsItemSearchSearchButton(AddonItemSearch* search, AtkResNode* owner, AtkResNode* focus)
+    {
+        if (search->SearchButton != null)
+        {
+            var btnNode = (AtkResNode*)search->SearchButton->OwnerNode;
+            if (btnNode != null && (btnNode == focus || btnNode == owner))
+                return true;
+            if (btnNode != null && (int)btnNode->Type >= 1000)
+            {
+                var btnComp = ((AtkComponentNode*)btnNode)->Component;
+                if (btnComp != null && ComponentContainsNode(btnComp, focus, 0))
+                    return true;
+            }
+        }
+
+        if (owner != null && owner->NodeId == 145) return true;
+        if (owner != null && (int)owner->Type >= 1000)
+        {
+            var comp = ((AtkComponentNode*)owner)->Component;
+            if (comp != null && comp->GetComponentType() == ComponentType.Button)
+            {
+                var t = TolkService.Sanitize(GetTextFromNodeTree(owner)).Trim();
+                if (t.Equals("Suche", StringComparison.OrdinalIgnoreCase)
+                    || t.Equals("Search", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+
+        var focusText = TolkService.Sanitize(GetTextFromNodeTree(focus)).Trim();
+        return focusText.Equals("Suche", StringComparison.OrdinalIgnoreCase)
+               || focusText.Equals("Search", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -10085,6 +11121,13 @@ public sealed class UIReaderService : IDisposable
         if (_lastListAnnounce.TryGetValue(name, out var lastA) && lastA == announce) return;
         _lastListAnnounce[name] = announce;
         _log.Info($"[Accessibility] {name} List-Navigation: [{idx}] {text}");
+        // Charakterauswahl: nicht den nackten Namen sprechen — Detail-Panel
+        // liefert Job/Ort wenige Frames spaeter (Log 2026-09-14 16:30).
+        if (name == "_CharaSelectListMenu")
+        {
+            BeginCharaSelectAnnounce(text);
+            return;
+        }
         _tolk.SpeakInterrupt(AppendShopGearInfo(text));
     }
 
@@ -12635,6 +13678,7 @@ public sealed class UIReaderService : IDisposable
         _addonLifecycle.UnregisterListener(AddonEvent.PostUpdate, "ArmouryBoard",  OnArmouryBoardUpdate);
         _addonLifecycle.UnregisterListener(AddonEvent.PostUpdate, "GrandCompanyExchange", OnGrandCompanyUpdate);
         _addonLifecycle.UnregisterListener(AddonEvent.PostUpdate, "Inventory", OnInventoryUpdate);
+        _addonLifecycle.UnregisterListener(AddonEvent.PostUpdate, "Buddy", OnBuddyUpdate);
         _addonLifecycle.UnregisterListener(AddonEvent.PostUpdate, "MountNoteBook", OnMountNoteBookUpdate);
         _addonLifecycle.UnregisterListener(AddonEvent.PostUpdate, "JournalDetail", OnQuestWindowUpdate);
         _addonLifecycle.UnregisterListener(AddonEvent.PostUpdate, "JournalAccept", OnQuestWindowUpdate);

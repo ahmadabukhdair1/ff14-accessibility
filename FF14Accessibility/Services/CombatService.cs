@@ -773,18 +773,10 @@ public sealed class CombatService
             return;
         }
 
-        var ui = UIState.Instance();
-        if (ui == null)
-        {
-            _tolk.SpeakInterrupt(AccessibilityStrings.ChocoboRankNotAvailable);
-            _log.Warning("[Chocobo] UIState nicht verfuegbar.");
-            return;
-        }
-
-        var companion = ui->Buddy.CompanionInfo;
-        int rank      = companion.Rank;
-        int stars     = companion.Stars;
-        var name      = companion.NameString;
+        var snap = ChocoboCompanionReading.Read(_data, _log);
+        int rank = snap.Rank;
+        int stars = snap.Stars;
+        var name = snap.Name;
 
         if (rank <= 0)
         {
@@ -800,46 +792,14 @@ public sealed class CombatService
             else
             {
                 _tolk.SpeakInterrupt(AccessibilityStrings.ChocoboRankNotAvailable);
-                _log.Warning($"[Chocobo] Name '{name}' vorhanden, aber Rang 0 - xp={companion.CurrentXP}");
+                _log.Warning($"[Chocobo] Name '{name}' vorhanden, aber Rang 0 - xp={snap.CurrentXp}");
             }
             return;
         }
 
-        // The threshold: sheet first, because it is there at every key press.
-        var sheetRow  = _data.GetExcelSheet<Lumina.Excel.Sheets.BuddyRank>()?.GetRowOrDefault((uint)rank);
-        int needed    = sheetRow == null ? -1 : (int)sheetRow.Value.ExpRequired;
-
-        // The bar the game painted the last time the chocobo window was open. Its
-        // rank field must match, otherwise it still holds an older rank's numbers.
-        //
-        // ONLY THE THRESHOLD IS TAKEN FROM HERE, NEVER THE CURRENT XP. The array
-        // is a painted value, not a reading: it is written when the window is
-        // built and then stands still while the chocobo keeps earning. Measured
-        // 2026-09-04: CompanionInfo said 64583 while the array still said 57749,
-        // and it only caught up when the window was reopened. The threshold is the
-        // one number in there that cannot go stale - it is fixed for the rank, and
-        // the rank is checked.
-        var num       = FFXIVClientStructs.FFXIV.Client.UI.Arrays.BuddyNumberArray.Instance();
-        int arrayRank = num == null ? -1 : num->BuddyRank;
-        int arrayCur  = num == null ? 0  : num->CurrentExp;
-        int arrayMax  = num == null ? 0  : num->MaxExp;
-        var fresh     = num != null && arrayRank == rank && arrayMax > 0;
-
-        if (fresh && needed > 0 && arrayMax != needed)
-        {
-            // Sheet and painted bar disagree - one of the two moved in a patch.
-            // The bar wins (it is what the player sees), but this must not pass
-            // unnoticed, or the sheet path would keep quoting a wrong number for
-            // everyone whose window stays closed.
-            _log.Warning($"[Chocobo] Schwelle uneinig: Sheet Zeile {rank} = {needed}, " +
-                         $"Balken = {arrayMax}. Balken hat Vorrang.");
-        }
-
-        if (fresh)
-            needed = arrayMax;
-
         var starText = stars > 0 ? AccessibilityStrings.ChocoboStars(stars) : string.Empty;
-        int current  = (int)companion.CurrentXP;
+        int current = snap.CurrentXp;
+        int needed = snap.NeededXp;
 
         string text;
         if (needed == 0)
@@ -858,11 +818,11 @@ public sealed class CombatService
             // No row for this rank at all - the sheet is shorter than the client's
             // rank. Then the collected XP is the only honest thing left to say.
             _log.Warning($"[Chocobo] Keine Sheet-Zeile fuer Rang {rank}.");
-            text = AccessibilityStrings.ChocoboRankExpOnly(rank, (int)companion.CurrentXP) + starText;
+            text = AccessibilityStrings.ChocoboRankExpOnly(rank, current) + starText;
         }
 
         _tolk.SpeakInterrupt(text);
-        LogChocoboReading(rank, stars, companion.CurrentXP, name, arrayRank, arrayCur, arrayMax, fresh);
+        LogChocoboReading(rank, stars, (uint)current, name, snap.ArrayRank, snap.ArrayCur, snap.ArrayMax, snap.ArrayFresh);
     }
 
     /// <summary>
