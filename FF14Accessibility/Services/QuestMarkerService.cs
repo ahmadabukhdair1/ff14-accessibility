@@ -5,6 +5,11 @@ using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
+using LuminaAction = Lumina.Excel.Sheets.Action;
+using LuminaClassJob = Lumina.Excel.Sheets.ClassJob;
+using LuminaContentFinderCondition = Lumina.Excel.Sheets.ContentFinderCondition;
+using LuminaEmote = Lumina.Excel.Sheets.Emote;
+using LuminaGeneralAction = Lumina.Excel.Sheets.GeneralAction;
 using LuminaLevel = Lumina.Excel.Sheets.Level;
 using LuminaQuest = Lumina.Excel.Sheets.Quest;
 
@@ -97,7 +102,14 @@ public sealed record QuestDestination(
     int Level,
     QuestMarkerRole Role = QuestMarkerRole.Quest,
     uint TargetBaseId = 0,
-    byte TargetLevelType = 0);
+    byte TargetLevelType = 0,
+    // Was die Quest laut Quest-Blatt freischaltet, als Teilsatz ("schaltet das
+    // Dungeon 'X' frei") - leer, wenn das Blatt nichts hergibt. Gebraucht wird
+    // das bei den NOCH NICHT angenommenen Quests: dort ist "welche davon geben
+    // mir etwas?" die eigentliche Frage, und die Markierung allein beantwortet
+    // sie nicht (der Marker traegt Name, Ort und eine Id, aber keinen
+    // Quest-Zeiger).
+    string Unlock = "");
 
 /// <summary>
 /// Reads the objective markers of ACCEPTED quests from the game's map
@@ -440,6 +452,218 @@ public sealed class QuestMarkerService
         }
     }
 
+    private Dictionary<string, List<LuminaQuest>>? _questsByName;
+    private Dictionary<uint, string>? _dutyNames;
+    private bool _unlockFieldsChecked;
+
+    /// <summary>
+    /// Name des Inhalts hinter einer InstanceContent-Id. Der Weg ist der der
+    /// Inhaltssuche: die Zeile <c>InstanceContent</c> selbst traegt KEINEN Namen
+    /// (gemessen 2026-09-15 - der Uebersetzungsversuch brach mit CS1061 ab),
+    /// benannt wird sie von <c>ContentFinderCondition.Content</c>. Erster Treffer
+    /// gewinnt: mehrere Zeilen teilen sich einen Inhalt.
+    /// </summary>
+    private string DutyName(uint contentId)
+    {
+        if (_dutyNames == null)
+        {
+            var map = new Dictionary<uint, string>();
+            foreach (var row in _data.GetExcelSheet<LuminaContentFinderCondition>())
+            {
+                var id = row.Content.RowId;
+                if (id == 0) continue;
+                var name = row.Name.ToString();
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                if (!map.ContainsKey(id)) map[id] = name;
+            }
+            _dutyNames = map;
+            _log.Info($"[Quest] Inhalts-Namen fuer Freischaltungen geladen: {map.Count}");
+        }
+
+        return _dutyNames.GetValueOrDefault(contentId, string.Empty);
+    }
+
+    /// <summary>
+    /// Was eine Quest laut Quest-Blatt freischaltet, als Teilsatz - leer, wenn
+    /// das Blatt nichts hergibt.
+    ///
+    /// Anlass: bei den NOCH NICHT angenommenen Quests ist die Frage "welche davon
+    /// geben mir etwas?" die eigentliche. Die Markierung allein beantwortet sie
+    /// nicht: der Marker traegt Name, Ort und eine Id, aber keinen Quest-Zeiger.
+    ///
+    /// Quelle sind die Felder, deren NAME die Sache ausspricht -
+    /// InstanceContentUnlock, ActionReward, GeneralActionReward, EmoteReward,
+    /// ClassJobUnlock, SystemReward, OtherReward. Gemessen am Blatt der
+    /// Installation (Dump 2026-09-15): 406 von 5373 Zeilen tragen mindestens
+    /// eines. Der Name des Freigeschalteten kommt aus dem jeweiligen Blatt;
+    /// laesst er sich nicht lesen, faellt nur der Name weg, nie der Satz.
+    /// </summary>
+    private string UnlockHint(string label)
+    {
+        foreach (var quest in QuestRows(label))
+        {
+            var hint = UnlockHint(quest);
+            if (hint.Length > 0) return hint;
+        }
+        return string.Empty;
+    }
+
+    private string UnlockHint(LuminaQuest quest)
+    {
+        CheckUnlockFields();
+
+        var dungeon = FieldId(quest, "InstanceContentUnlock");
+        if (dungeon != 0)
+            return AccessibilityStrings.QuestUnlocksDungeon(DutyName(dungeon));
+
+        var emote = FieldId(quest, "EmoteReward");
+        if (emote != 0)
+        {
+            var name = _data.GetExcelSheet<LuminaEmote>().TryGetRow(emote, out var row)
+                ? row.Name.ExtractText()
+                : string.Empty;
+            return AccessibilityStrings.QuestUnlocksEmote(name);
+        }
+
+        var action = FieldId(quest, "ActionReward");
+        if (action != 0)
+        {
+            var name = _data.GetExcelSheet<LuminaAction>().TryGetRow(action, out var row)
+                ? row.Name.ExtractText()
+                : string.Empty;
+            return AccessibilityStrings.QuestUnlocksAction(name);
+        }
+
+        var general = FieldId(quest, "GeneralActionReward");
+        if (general != 0)
+        {
+            var name = _data.GetExcelSheet<LuminaGeneralAction>().TryGetRow(general, out var row)
+                ? row.Name.ExtractText()
+                : string.Empty;
+            return AccessibilityStrings.QuestUnlocksAction(name);
+        }
+
+        var classJob = FieldId(quest, "ClassJobUnlock");
+        if (classJob != 0)
+        {
+            var name = _data.GetExcelSheet<LuminaClassJob>().TryGetRow(classJob, out var row)
+                ? row.Name.ExtractText()
+                : string.Empty;
+            return AccessibilityStrings.QuestUnlocksClassJob(name);
+        }
+
+        if (FieldId(quest, "SystemReward") != 0 || FieldId(quest, "OtherReward") != 0)
+            return AccessibilityStrings.QuestUnlocksSomething;
+
+        return string.Empty;
+    }
+
+    /// <summary>Quest-Zeilen des Blattes zu einem Markierungs-Label. Ein Name
+    /// darf auf mehrere Zeilen zeigen ("Way of the Archer" steht zweimal im
+    /// Blatt); gelesen werden dann alle, und der erste Freischalt-Hinweis
+    /// gewinnt. Zeilen ohne Journal-Gattung ("Ungueltige Kategorie") fallen
+    /// raus - dieselbe Regel, die die uebrigen Tabellen konfliktfrei macht.</summary>
+    private List<LuminaQuest> QuestRows(string label)
+    {
+        if (_questsByName == null)
+        {
+            var map = new Dictionary<string, List<LuminaQuest>>(System.StringComparer.OrdinalIgnoreCase);
+            foreach (var quest in _data.GetExcelSheet<LuminaQuest>())
+            {
+                var name = quest.Name.ExtractText();
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                if (quest.JournalGenre.RowId == 0) continue; // "Ungueltige Kategorie"
+                if (!map.TryGetValue(name, out var list)) map[name] = list = new List<LuminaQuest>();
+                list.Add(quest);
+            }
+            _questsByName = map;
+            _log.Info($"[Quest] Quest-Zeilen nach Namen: {map.Count}");
+        }
+
+        return _questsByName.GetValueOrDefault(label, new List<LuminaQuest>());
+    }
+
+    /// <summary>
+    /// Meldet EINMAL je Sitzung, ob es die Freischalt-Felder in dieser
+    /// Lumina-Fassung ueberhaupt gibt. Ohne diese Zeile waere ein fehlendes Feld
+    /// von einem leeren nicht zu unterscheiden - und "schaltet nichts frei"
+    /// waere eine Behauptung ohne Deckung.
+    /// </summary>
+    private void CheckUnlockFields()
+    {
+        if (_unlockFieldsChecked) return;
+        _unlockFieldsChecked = true;
+
+        var missing = UnlockFields
+            .Where(f => typeof(LuminaQuest).GetProperty(f) == null)
+            .ToList();
+        _log.Info(missing.Count == 0
+            ? $"[Quest] Freischalt-Felder vorhanden: {string.Join(", ", UnlockFields)}"
+            : $"[Quest] Freischalt-Felder FEHLEN in dieser Lumina-Fassung: {string.Join(", ", missing)}");
+    }
+
+    /// <summary>Felder, deren Name die Sache ausspricht. Reihenfolge = Vorrang
+    /// bei der Ansage: das Konkrete vor dem Allgemeinen.</summary>
+    private static readonly string[] UnlockFields =
+    {
+        "InstanceContentUnlock", "EmoteReward", "ActionReward", "GeneralActionReward",
+        "ClassJobUnlock", "SystemReward", "OtherReward",
+    };
+
+    /// <summary>
+    /// Rohwert eines Blattfeldes. Zahlen direkt, Zeilenreferenzen ueber RowId,
+    /// FELDER (Lumina-Collection) ueber das erste Element ungleich Null:
+    /// SystemReward der Chocobo-Quest 66236 ist [0|17] - ein Feld, das als "0"
+    /// gelesen als "traegt nichts" durchginge.
+    ///
+    /// Ueber Reflection, weil diese Lumina-Fassung die Feldtypen hier nicht
+    /// ausschreibt; ein Feld, das es nicht gibt, liefert 0 und wird von
+    /// <see cref="CheckUnlockFields"/> als fehlend gemeldet.
+    /// </summary>
+    private static uint FieldId(LuminaQuest quest, string field)
+    {
+        object? value;
+        try // external call: Lumina row property
+        {
+            value = typeof(LuminaQuest).GetProperty(field)?.GetValue(quest);
+        }
+        catch (System.Exception)
+        {
+            return 0;
+        }
+
+        if (value is System.Collections.IEnumerable items and not string)
+        {
+            foreach (var item in items)
+            {
+                var element = ScalarId(item);
+                if (element != 0) return element;
+            }
+            return 0;
+        }
+        return ScalarId(value);
+    }
+
+    private static uint ScalarId(object? value)
+    {
+        switch (value)
+        {
+            case uint u: return u;
+            case ushort us: return us;
+            case byte b: return b;
+            case null: return 0;
+        }
+
+        var rowId = value.GetType().GetProperty("RowId");
+        return rowId?.GetValue(value) switch
+        {
+            uint r => r,
+            ushort r => r,
+            byte r => r,
+            _ => 0,
+        };
+    }
+
     private unsafe void AddMarkerDestinations(
         List<QuestDestination> result, MarkerInfo marker, uint currentTerritory, string tag,
         QuestMarkerRole role = QuestMarkerRole.Quest)
@@ -452,6 +676,11 @@ public sealed class QuestMarkerService
         // when the game leaves RecommendedLevel at 0 (runtime behaviour unknown,
         // hence both values in the log below).
         var sheetLevel = QuestLevels().GetValueOrDefault(questName, 0);
+
+        // Was die Quest freischaltet - nur fuer annehmbare Quests: bei den
+        // angenommenen hat die Spielerin die Freischaltung ohnehin schon in der
+        // Hand, und die Ansage waere nur laenger.
+        var unlock = role == QuestMarkerRole.Quest ? UnlockHint(questName) : string.Empty;
 
         var locations = marker.MarkerData.Count;
         if (locations is < 0 or > 100)
@@ -466,7 +695,7 @@ public sealed class QuestMarkerService
             var data = marker.MarkerData[i];
             var tooltip = data.TooltipString != null ? data.TooltipString->ToString() : string.Empty;
             var inZone = data.TerritoryTypeId == currentTerritory;
-            _log.Info($"[{tag}] Marker '{questName}' [{i + 1}/{locations}]: tt='{tooltip}' " +
+            _log.Info($"[{tag}] Marker '{questName}' [{i + 1}/{locations}]: tt='{tooltip}' unlock='{unlock}' " +
                       $"pos=({data.Position.X:F1}|{data.Position.Y:F1}|{data.Position.Z:F1}) " +
                       $"r={data.Radius:F1} terr={data.TerritoryTypeId} (aktuell={currentTerritory}) " +
                       $"map={data.MapId} icon={data.IconId} render={marker.ShouldRender} " +
@@ -494,7 +723,7 @@ public sealed class QuestMarkerService
 
             result.Add(new QuestDestination(questName, tooltip, data.Position,
                 data.Radius, data.TerritoryTypeId, data.MapId, inZone, kind, level, role,
-                targetBaseId, targetType));
+                targetBaseId, targetType, unlock));
         }
     }
 }
