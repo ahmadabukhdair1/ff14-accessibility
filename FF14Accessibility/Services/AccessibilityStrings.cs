@@ -1201,6 +1201,42 @@ public static partial class AccessibilityStrings
         _                    => string.Empty,
     };
     public static string LevelPrefix(int level) => IsGerman ? $"Stufe {level}, " : $"Level {level}, ";
+
+    // ── Was eine Quest freischaltet ──────────────────────────────────
+    //
+    // Bei den noch NICHT angenommenen Quests ist die eigentliche Frage "welche
+    // davon geben mir etwas?" - die Markierung allein sagt das nicht. Quelle ist
+    // das Quest-Blatt: Felder, deren NAME die Sache ausspricht
+    // (InstanceContentUnlock, ActionReward, GeneralActionReward, EmoteReward,
+    // ClassJobUnlock, SystemReward, OtherReward; im Blatt der Installation
+    // tragen 406 von 5373 Zeilen mindestens eines).
+    //
+    // Die Sätze sind TEILSAETZE ohne Schlusspunkt: sie stehen im Ansage-Satz
+    // direkt hinter dem Quest-Namen, wo danach noch Entfernung und Richtung
+    // folgen. Ist der Name des Freigeschalteten nicht lesbar, faellt nur der
+    // Name weg - "schaltet ein Dungeon frei" bleibt wahr, ein geratener Name
+    // waere es nicht.
+    public static string QuestUnlocksDungeon(string name) => name.Length > 0
+        ? (IsGerman ? $"schaltet das Dungeon '{name}' frei" : $"unlocks the dungeon '{name}'")
+        : (IsGerman ? "schaltet ein Dungeon frei" : "unlocks a dungeon");
+
+    public static string QuestUnlocksEmote(string name) => name.Length > 0
+        ? (IsGerman ? $"schaltet die Emote '{name}' frei" : $"unlocks the emote '{name}'")
+        : (IsGerman ? "schaltet eine Emote frei" : "unlocks an emote");
+
+    public static string QuestUnlocksAction(string name) => name.Length > 0
+        ? (IsGerman ? $"schaltet die Aktion '{name}' frei" : $"unlocks the action '{name}'")
+        : (IsGerman ? "schaltet eine Aktion frei" : "unlocks an action");
+
+    public static string QuestUnlocksClassJob(string name) => name.Length > 0
+        ? (IsGerman ? $"schaltet '{name}' frei" : $"unlocks '{name}'")
+        : (IsGerman ? "schaltet eine Klasse oder einen Job frei" : "unlocks a class or job");
+
+    /// <summary>SystemReward / OtherReward: die Felder sind gesetzt, ihr Inhalt
+    /// ist aber nicht aufloesbar - es gibt im Lumina-Stand des Clients kein Blatt
+    /// dazu. Also wird gesagt, WAS gemessen ist, und nicht geraten, WAS es ist.</summary>
+    public static string QuestUnlocksSomething =>
+        IsGerman ? "schaltet etwas Neues frei" : "unlocks something new";
     public static string InArea(string zone)    => IsGerman ? $"im Gebiet {zone}." : $"in the area {zone}.";
     public static string InAnotherArea       => IsGerman ? "in einem anderen Gebiet." : "in another area.";
     public static string NumpadWalksToTransition => IsGerman ? " Nummernblock 3 läuft zum Übergang." : " Numpad 3 walks to the transition.";

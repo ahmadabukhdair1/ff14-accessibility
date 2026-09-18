@@ -1599,6 +1599,12 @@ public sealed class NavigationService
         // game gave us no level rather than announcing a made-up "Stufe 0".
         var level = dest.Level > 0 ? AccessibilityStrings.LevelPrefix(dest.Level) : string.Empty;
 
+        // Was die Quest laut Quest-Blatt freischaltet - die Frage, die sich bei
+        // ANNEHMBAREN Quests stellt ("welche davon geben mir etwas?"). Bei
+        // angenommenen Quests bleibt sie weg: dort hat die Spielerin die
+        // Freischaltung ohnehin schon in der Hand.
+        var unlock = unaccepted && dest.Unlock.Length > 0 ? $", {dest.Unlock}" : string.Empty;
+
         // Current objective ("what is still missing", e.g. "Aurelias erlegen 0/3")
         // from the on-screen quest tracker. Only tracked quests have one; the
         // marker tooltip stays as a fallback for the rest.
@@ -1610,7 +1616,7 @@ public sealed class NavigationService
         string text;
         if (dest.InCurrentZone)
         {
-            text = $"{level}{story}{dest.QuestName}{todo}, " +
+            text = $"{level}{story}{dest.QuestName}{unlock}{todo}, " +
                    $"{FormatDistance(Vector3.Distance(player.Position, dest.Position))}, " +
                    $"{CalculateDirection(player, dest.Position)}" +
                    $"{GoalCircleHint(dest, player)}.{detail}";
@@ -1621,7 +1627,7 @@ public sealed class NavigationService
             // and the transition that leads there (BFS over the map graph).
             var zone = _places.GetMapName(dest.MapId);
             var hop  = _places.FindFirstHopToMap(dest.MapId, out var hops);
-            text = $"{level}{story}{dest.QuestName}{todo}, " +
+            text = $"{level}{story}{dest.QuestName}{unlock}{todo}, " +
                    (string.IsNullOrEmpty(zone) ? AccessibilityStrings.InAnotherArea : AccessibilityStrings.InArea(zone));
             if (hop != null)
             {
