@@ -1267,7 +1267,6 @@ public static partial class AccessibilityStrings
     /// dazu. Also wird gesagt, WAS gemessen ist, und nicht geraten, WAS es ist.</summary>
     public static string QuestUnlocksSomething =>
         IsGerman ? "schaltet etwas Neues frei" : "unlocks something new";
-
     public static string InArea(string zone)    => IsGerman ? $"im Gebiet {zone}." : $"in the area {zone}.";
     public static string InAnotherArea       => IsGerman ? "in einem anderen Gebiet." : "in another area.";
     public static string NumpadWalksToTransition => IsGerman ? " Nummernblock 3 läuft zum Übergang." : " Numpad 3 walks to the transition.";

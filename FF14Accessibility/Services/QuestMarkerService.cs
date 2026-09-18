@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Plugin.Services;
@@ -35,8 +35,8 @@ public enum QuestMarkerRole
     /// <summary>An invisible walk-in volume (<c>Level.Type</c> 49 EventRange)
     /// tied to an accepted quest. Map markers (Type 51) only name a search
     /// circle; enemies/progress often start only after entering one of these
-    /// smaller ranges (measured 2026-09-09/10, MSQ „Die Gabe der
-    /// Unsterblichkeit“). Listed under Quest objects — not live GameObjects.</summary>
+    /// smaller ranges (measured 2026-09-09/10, MSQ â€žDie Gabe der
+    /// Unsterblichkeitâ€œ). Listed under Quest objects â€” not live GameObjects.</summary>
     QuestTrigger,
 }
 
@@ -112,6 +112,12 @@ public sealed record QuestDestination(
     QuestMarkerRole Role = QuestMarkerRole.Quest,
     uint TargetBaseId = 0,
     byte TargetLevelType = 0,
+    // Was die Quest laut Quest-Blatt freischaltet, als Teilsatz ("schaltet das
+    // Dungeon 'X' frei") - leer, wenn das Blatt nichts hergibt. Gebraucht wird
+    // das bei den NOCH NICHT angenommenen Quests: dort ist "welche davon geben
+    // mir etwas?" die eigentliche Frage, und die Markierung allein beantwortet
+    // sie nicht (der Marker traegt Name, Ort und eine Id, aber keinen
+    // Quest-Zeiger).
     string Unlock = "");
 
 /// <summary>
@@ -123,12 +129,12 @@ public sealed class QuestMarkerService
 {
     /// <summary>Lumina <c>Level.Type</c> / ClientStructs <c>InstanceType.EventRange</c>.
     /// Sheet dump: Type 49 rows carry <c>Object</c> 5000000 and an <c>EventId</c>
-    /// pointing at the Quest row — the walk-in volumes inside a map goal circle.</summary>
+    /// pointing at the Quest row â€” the walk-in volumes inside a map goal circle.</summary>
     private const byte LevelTypeEventRange = 49;
 
     /// <summary>Extra metres beyond a map marker's Radius when deciding whether
     /// an EventRange belongs to the current objective pin. Marker centres and
-    /// range centres do not coincide (Gabe: ~15–18 m offset inside r=35).</summary>
+    /// range centres do not coincide (Gabe: ~15â€“18 m offset inside r=35).</summary>
     private const float EventRangeMarkerSlack = 15f;
 
     private readonly IClientState _clientState;
@@ -158,7 +164,7 @@ public sealed class QuestMarkerService
     /// <para>
     /// Rows WITHOUT a journal genre are skipped, and that is what makes the name
     /// lookup trustworthy: the sheet holds duplicate quest names whose sections
-    /// disagree (e.g. "In flagranti" as both section 0 and "Ungültige
+    /// disagree (e.g. "In flagranti" as both section 0 and "UngÃ¼ltige
     /// Kategorie"). Measured on the 2026-08-06 sheet dump: 44 of 5276 names
     /// conflict, and skipping the genre-less rows brings that to exactly 0.
     /// </para>
@@ -172,7 +178,7 @@ public sealed class QuestMarkerService
         {
             var name = quest.Name.ExtractText();
             if (string.IsNullOrWhiteSpace(name)) continue;
-            if (quest.JournalGenre.RowId == 0) continue;   // "Ungültige Kategorie" row
+            if (quest.JournalGenre.RowId == 0) continue;   // "UngÃ¼ltige Kategorie" row
 
             var genre = quest.JournalGenre.ValueNullable;
             var category = genre?.JournalCategory.ValueNullable;
@@ -198,7 +204,7 @@ public sealed class QuestMarkerService
     /// Maps a JournalSection row to the kind spoken to the player. Section ids
     /// read from the game's own JournalSection sheet (offline dump 2026-08-06):
     /// 0 Hauptszenario (ARR-EW), 1 Hauptszenario (Dawntrail), 2 Chroniken der
-    /// neuen Ära, 3 Nebenaufträge, 4/5 Freundesvölker, 6 Klassen und Jobs,
+    /// neuen Ã„ra, 3 NebenauftrÃ¤ge, 4/5 FreundesvÃ¶lker, 6 Klassen und Jobs,
     /// 7 Sonstige, 8 Freibriefe, 9 Inhalte. Sections 8 and 9 hold no quests at
     /// all (measured), so they - like anything unexpected - fall through to
     /// <see cref="QuestKind.Unknown"/> and stay silent rather than being folded
@@ -243,7 +249,7 @@ public sealed class QuestMarkerService
     }
 
     /// <summary>
-    /// Quest name → sheet RowId, built once. Same JournalGenre filter as
+    /// Quest name â†’ sheet RowId, built once. Same JournalGenre filter as
     /// <see cref="QuestKinds"/> so duplicate names without a genre cannot steal
     /// the id of a real journal quest. First matching row wins (same caveat as
     /// levels: reused names are imperfect).
@@ -268,7 +274,7 @@ public sealed class QuestMarkerService
 
     /// <summary>
     /// All Level Type-49 (EventRange) rows keyed by Quest RowId (<c>EventId</c>).
-    /// Built once — the sheet is ~60k rows; browsing must not rescan it.
+    /// Built once â€” the sheet is ~60k rows; browsing must not rescan it.
     /// </summary>
     private Dictionary<uint, List<EventRangeRow>> EventRangesByQuestId()
     {
@@ -296,7 +302,7 @@ public sealed class QuestMarkerService
         }
 
         _eventRangesByQuestId = byQuest;
-        _log.Info($"[Quest] EventRange-Index: {total} Auslöser für {byQuest.Count} Quests.");
+        _log.Info($"[Quest] EventRange-Index: {total} AuslÃ¶ser fÃ¼r {byQuest.Count} Quests.");
         return byQuest;
     }
 
@@ -308,7 +314,7 @@ public sealed class QuestMarkerService
     /// RowId (sheet + zone-probe 2026-09-10). Ranges are kept when they sit
     /// near an in-zone marker of that quest (marker Radius + slack), so later
     /// steps of the same quest do not flood the list. Listed under the Quest
-    /// objects browser — these are not ObjectTable entries.
+    /// objects browser â€” these are not ObjectTable entries.
     /// </summary>
     public unsafe List<QuestDestination> GetEventRangeDestinations()
     {
@@ -390,7 +396,7 @@ public sealed class QuestMarkerService
             }
         }
 
-        _log.Info($"[Quest] EventRange-Auslöser in Zone ({result.Count}): " +
+        _log.Info($"[Quest] EventRange-AuslÃ¶ser in Zone ({result.Count}): " +
                   (trace.Count > 0 ? string.Join(" | ", trace) : "keine"));
         return result;
     }
@@ -657,9 +663,18 @@ public sealed class QuestMarkerService
 
     /// <summary>
     /// Was eine Quest laut Quest-Blatt freischaltet, als Teilsatz - leer, wenn
-    /// das Blatt nichts hergibt. Quelle: InstanceContentUnlock, ActionReward,
-    /// GeneralActionReward, EmoteReward, ClassJobUnlock, SystemReward, OtherReward
-    /// (PR 28 / gemessen 2026-09-15).
+    /// das Blatt nichts hergibt.
+    ///
+    /// Anlass: bei den NOCH NICHT angenommenen Quests ist die Frage "welche davon
+    /// geben mir etwas?" die eigentliche. Die Markierung allein beantwortet sie
+    /// nicht: der Marker traegt Name, Ort und eine Id, aber keinen Quest-Zeiger.
+    ///
+    /// Quelle sind die Felder, deren NAME die Sache ausspricht -
+    /// InstanceContentUnlock, ActionReward, GeneralActionReward, EmoteReward,
+    /// ClassJobUnlock, SystemReward, OtherReward. Gemessen am Blatt der
+    /// Installation (Dump 2026-09-15): 406 von 5373 Zeilen tragen mindestens
+    /// eines. Der Name des Freigeschalteten kommt aus dem jeweiligen Blatt;
+    /// laesst er sich nicht lesen, faellt nur der Name weg, nie der Satz.
     /// </summary>
     private string UnlockHint(string label)
     {
@@ -721,7 +736,11 @@ public sealed class QuestMarkerService
         return string.Empty;
     }
 
-    /// <summary>Quest-Zeilen des Blattes zu einem Markierungs-Label.</summary>
+    /// <summary>Quest-Zeilen des Blattes zu einem Markierungs-Label. Ein Name
+    /// darf auf mehrere Zeilen zeigen ("Way of the Archer" steht zweimal im
+    /// Blatt); gelesen werden dann alle, und der erste Freischalt-Hinweis
+    /// gewinnt. Zeilen ohne Journal-Gattung ("Ungueltige Kategorie") fallen
+    /// raus - dieselbe Regel, die die uebrigen Tabellen konfliktfrei macht.</summary>
     private List<LuminaQuest> QuestRows(string label)
     {
         if (_questsByName == null)
@@ -742,7 +761,12 @@ public sealed class QuestMarkerService
         return _questsByName.GetValueOrDefault(label, new List<LuminaQuest>());
     }
 
-    /// <summary>Einmal je Sitzung: ob die Freischalt-Felder in dieser Lumina-Fassung existieren.</summary>
+    /// <summary>
+    /// Meldet EINMAL je Sitzung, ob es die Freischalt-Felder in dieser
+    /// Lumina-Fassung ueberhaupt gibt. Ohne diese Zeile waere ein fehlendes Feld
+    /// von einem leeren nicht zu unterscheiden - und "schaltet nichts frei"
+    /// waere eine Behauptung ohne Deckung.
+    /// </summary>
     private void CheckUnlockFields()
     {
         if (_unlockFieldsChecked) return;
@@ -756,6 +780,8 @@ public sealed class QuestMarkerService
             : $"[Quest] Freischalt-Felder FEHLEN in dieser Lumina-Fassung: {string.Join(", ", missing)}");
     }
 
+    /// <summary>Felder, deren Name die Sache ausspricht. Reihenfolge = Vorrang
+    /// bei der Ansage: das Konkrete vor dem Allgemeinen.</summary>
     private static readonly string[] UnlockFields =
     {
         "InstanceContentUnlock", "EmoteReward", "ActionReward", "GeneralActionReward",
@@ -763,9 +789,14 @@ public sealed class QuestMarkerService
     };
 
     /// <summary>
-    /// Rohwert eines Blattfeldes per Reflection (Lumina schreibt die Typen hier
-    /// nicht aus). Zahlen direkt, Zeilenreferenzen ueber RowId, Collections ueber
-    /// das erste Element ungleich Null.
+    /// Rohwert eines Blattfeldes. Zahlen direkt, Zeilenreferenzen ueber RowId,
+    /// FELDER (Lumina-Collection) ueber das erste Element ungleich Null:
+    /// SystemReward der Chocobo-Quest 66236 ist [0|17] - ein Feld, das als "0"
+    /// gelesen als "traegt nichts" durchginge.
+    ///
+    /// Ueber Reflection, weil diese Lumina-Fassung die Feldtypen hier nicht
+    /// ausschreibt; ein Feld, das es nicht gibt, liefert 0 und wird von
+    /// <see cref="CheckUnlockFields"/> als fehlend gemeldet.
     /// </summary>
     private static uint FieldId(LuminaQuest quest, string field)
     {
@@ -824,15 +855,15 @@ public sealed class QuestMarkerService
         // hence both values in the log below).
         var sheetLevel = QuestLevels().GetValueOrDefault(questName, 0);
 
-        // Was die Quest freischaltet - nur fuer normale Quest-Marker (nicht Leve):
-        // bei angenommenen Quests wird der Teilsatz in der Ansage weggelassen.
+        // Was die Quest freischaltet - nur fuer normale Quest-Marker (nicht Leve).
+        // Bei angenommenen Quests wird der Teilsatz in der Ansage weggelassen.
         var unlock = role == QuestMarkerRole.Quest ? UnlockHint(questName) : string.Empty;
 
         var locations = marker.MarkerData.Count;
         if (locations is < 0 or > 100)
         {
             // Foreign memory - a corrupt vector must not take the game down.
-            _log.Warning($"[{tag}] Marker '{questName}': unplausible MarkerData.Count={locations}, übersprungen.");
+            _log.Warning($"[{tag}] Marker '{questName}': unplausible MarkerData.Count={locations}, Ã¼bersprungen.");
             return;
         }
 
